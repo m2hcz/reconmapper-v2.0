@@ -1,87 +1,70 @@
 # ReconMapper v2.0
 
-**Um crawler web assíncrono e inteligente para reconhecimento em segurança ofensiva, construído com Python, Playwright e asyncio.**
+An intelligent, asynchronous web crawler for offensive security reconnaissance, built with Python, Playwright, and asyncio.
 
 ---
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/M4cs/recon-mapper/main/assets/logo.png" width="350"/>
-</p>
+## About The Project
 
-<p align="center">
-  <a href="https://github.com/M4cs/recon-mapper/stargazers"><img src="https://img.shields.io/github/stars/M4cs/recon-mapper?style=social" alt="Stars"></a>
-  <a href="https://github.com/M4cs/recon-mapper/issues"><img src="https://img.shields.io/github/issues/M4cs/recon-mapper" alt="Issues"></a>
-  <a href="https://github.com/M4cs/recon-mapper/blob/main/LICENSE"><img src="https://img.shields.io/github/license/M4cs/recon-mapper" alt="License"></a>
-</p>
+ReconMapper is a reconnaissance (recon) tool designed to automate the initial phase of a pentest or an offensive security assessment. Instead of relying on simple HTTP requests, it leverages a headless browser controlled by Playwright to render dynamic web pages, including Single Page Applications (SPAs) built with frameworks like React, Angular, or Vue.js.
 
-## 📌 Sobre o Projeto
-
-O **ReconMapper** é uma ferramenta de reconhecimento (recon) projetada para automatizar a fase inicial de um pentest ou de uma análise de segurança ofensiva. Em vez de depender de requisições simples, ele utiliza um **navegador headless controlado pelo Playwright** para renderizar páginas web dinâmicas, incluindo aplicações de página única (SPAs) construídas com frameworks como React, Angular ou Vue.js.
-
-Isso permite uma descoberta de endpoints, subdomínios e arquivos muito mais profunda e realista, simulando a interação de um usuário real e extraindo links que crawlers tradicionais não conseguiriam encontrar. O uso de **`asyncio`** e múltiplos workers garante uma performance excepcional, mesmo ao lidar com alvos grandes e complexos.
-
-## ✨ Principais Funcionalidades
-
-* **Renderização Completa de JavaScript:** Usa um navegador Chromium real (via Playwright) para garantir que todo o conteúdo dinâmico seja processado.
-* **Crawling Assíncrono e Paralelo:** Utiliza `asyncio` e múltiplos workers para escanear dezenas de páginas simultaneamente com alta velocidade.
-* **Extração Inteligente de Links:** Encontra URLs em tags HTML (`<a>`, `<script>`, etc.), e também dentro de código JavaScript e strings usando expressões regulares.
-* **Controle de Escopo Automático:** Mantém o foco no domínio alvo e em seus subdomínios, evitando o rastreamento de links de terceiros.
-* **Respeito ao `robots.txt`:** Processa e obedece às regras definidas no arquivo `robots.txt` do alvo para um crawling mais ético.
-* **Normalização de URLs:** Limpa e padroniza as URLs encontradas para evitar a duplicação de trabalho e garantir a consistência dos dados.
-* **Saída Estruturada:** Gera os resultados em tempo real (streaming) como objetos JSON e pode criar um relatório final consolidado com todos os achados.
-* **Flexibilidade:** Permite configurar o número de threads, a profundidade do rastreamento, timeouts e o modo de execução do navegador (com ou sem interface gráfica).
+This allows for a much deeper and more realistic discovery of endpoints, subdomains, and files, simulating real user interaction and extracting links that traditional crawlers would miss. The use of `asyncio` and multiple workers ensures exceptional performance, even when dealing with large and complex targets.
 
 ---
 
-## 🚀 Instalação e Uso
+## Key Features
 
-### Pré-requisitos
+* **Full JavaScript Rendering:** Uses a real Chromium browser (via Playwright) to ensure all dynamic content is processed.
+* **Asynchronous & Parallel Crawling:** Leverages `asyncio` and multiple workers to scan dozens of pages simultaneously at high speed.
+* **Intelligent Link Extraction:** Finds URLs in HTML tags (`<a>`, `<script>`, etc.), and also within JavaScript code and strings using regular expressions.
+* **Automatic Scope Control:** Maintains focus on the target domain and its subdomains, avoiding the crawl of third-party links.
+* **Respects `robots.txt`:** Fetches and obeys the rules defined in the target's `robots.txt` file for more ethical crawling.
+* **URL Normalization:** Cleans and standardizes discovered URLs to avoid duplicate work and ensure data consistency.
+* **Structured Output:** Generates results in real-time (streaming) as JSON objects and can create a final, consolidated summary report of all findings.
+* **Flexibility:** Allows configuration of thread count, crawl depth, timeouts, and browser execution mode (headless or with a GUI).
+
+---
+
+## Getting Started
+
+### Prerequisites
 
 * Python 3.8+
 * Pip
 
-### Exemplos de Uso
+### Usage Examples
 
-* **Varredura básica em um alvo:**
+* **Basic scan on a target:**
     ```sh
-    python recon_mapper.py -t example.com
+    python3 mapcrawller.py -t example.com
     ```
 
-* **Varredura com mais threads e salvando um resumo final:**
+* **Scan with more threads, saving a final summary:**
     ```sh
-    python recon_mapper.py -t example.com -T 20 --summary resultados.json
+    python mapcrawller.py -t example.com -T 20 --summary results.json
     ```
 
-* **Varredura em modo "verbose" e com interface gráfica (não headless) para depuração:**
+* **Verbose scan with a visible browser UI (non-headless) for debugging:**
     ```sh
-    python recon_mapper.py -t example.com -v --no-headless
+    python3 mapcrawller.py -t example.com -v --no-headless
     ```
 
-* **Salvando todos os eventos encontrados em tempo real (streaming):**
+* **Saving all discovered events in real-time (streaming):**
     ```sh
-    python recon_mapper.py -t example.com -o eventos.jsonl
+    python3 mapcrawller.py -t example.com -o events.jsonl
     ```
 
-### Opções da Linha de Comando
+### Command-Line Options
 
-| Argumento | Atalho | Descrição | Padrão |
+| Argument | Alias | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `--target` | `-t` | **(Obrigatório)** O domínio alvo, sem 'https://'. | N/A |
-| `--threads` | `-T` | Número de workers paralelos para o crawling. | 10 |
-| `--timeout` | | Timeout em segundos para cada requisição. | 15 |
-| `--max-depth` | | Profundidade máxima de rastreamento a partir da URL inicial. | 5 |
-| `--headless` | | Executar o navegador em modo headless (sem interface). Use `--no-headless` para visualizar a interface. | True |
-| `--out` | `-o` | Arquivo de saída para eventos JSON (um por linha, streaming). | None |
-| `--summary` | | Arquivo JSON de saída com o resumo final de todos os achados. | None |
-| `--verbose` | `-v` | Ativa logs detalhados e imprime os eventos JSON na tela em tempo real. | False |
-
----
-
-## 🗺️ Roadmap do Projeto
-
-* [ ] Implementar detecção de tecnologias e CMS.
-* [ ] Adicionar um módulo para tirar screenshots das páginas visitadas.
-* [ ] Integrar com APIs externas para enriquecimento de dados (ex: Shodan, VirusTotal).
-* [ ] Melhorar a extração de informações sensíveis (chaves de API, segredos) do código-fonte.
+| `--target` | `-t` | **(Required)** The target domain, without 'https://'. | N/A |
+| `--threads` | `-T` | Number of parallel crawling workers. | 10 |
+| `--timeout` | | Timeout in seconds for each request. | 15 |
+| `--max-depth` | | Maximum crawl depth from the starting URL. | 5 |
+| `--headless` | | Run the browser in headless mode. Use `--no-headless` to see the UI. | True |
+| `--out` | `-o` | Output file for JSON events (one per line, streaming). | None |
+| `--summary` | | Final JSON output file with a summary of all findings. | None |
+| `--verbose` | `-v` | Enable verbose logging and print JSON events to the screen. | False |
 
 ---
