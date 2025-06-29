@@ -1,236 +1,199 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 from __future__ import annotations
-import argparse
-import asyncio
-import json
-import logging
-import re
-import socket
-import urllib.parse as up
-import urllib.robotparser
-from dataclasses import dataclass, field
+
+import argparse, asyncio, json, logging, re, urllib.robotparser, xml.etree.ElementTree as ET
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 import aiohttp
 from aiohttp import ClientTimeout
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, Browser, Page
+from playwright.async_api import Browser, Page, Response, TimeoutError as PlaywrightTimeoutError, async_playwright
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.table import Table
 
-URL_REGEX = re.compile(r'[\'"\(](?P<url>/[a-zA-Z0-9_./-]*|https?://[a-zA-Z0-9_./-]+)[\'"\)]')
-IGNORED_EXTENSIONS = {'.css', '.ico', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.zip', '.mp4', '.avi', '.mov'}
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+MAX_THREADS = 100
+DEFAULT_TIMEOUT = 15
+IGNORED_EXTENSIONS = {".css"}
+URL_REGEX = re.compile(r"[\"'()](?P<url>/(?!/)[\w./\-]*\??[\w=&\-]*|https?://[\w./\-]+\??[\w=&\-]*)[\"'()]")
 
 @dataclass(slots=True, frozen=True)
 class Cfg:
     target: str
     threads: int = 10
-    timeout: int = 15
+    timeout: int = DEFAULT_TIMEOUT
     max_depth: int = 5
     out: Optional[str] = None
     summary: Optional[str] = None
     verbose: bool = False
     headless: bool = True
+    wayback: bool = False
 
 class ReconMapper:
     def __init__(self, cfg: Cfg) -> None:
         self.cfg = cfg
-        self.base_host = up.urlparse(f"https://{cfg.target}").hostname
-        self.in_scope = lambda h: h == self.base_host or h.endswith("." + self.base_host)
-        
-        self.queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
+        self.console = Console()
+        logging.basicConfig(level="NOTSET", format="%(message)s", handlers=[RichHandler(console=self.console, show_time=False, show_path=False)])
+        self.log = logging.getLogger("ReconMapper")
+        self.log.setLevel(logging.DEBUG if cfg.verbose else logging.INFO)
+        self.base_host = urlparse(f"https://{cfg.target}").hostname or cfg.target
+        self.queue: asyncio.Queue[Tuple[str,int]] = asyncio.Queue()
         self.visited: Set[str] = set()
-        
-        self.results: Dict[str, Set[str]] = {
-            "endpoints": set(),
-            "files": set(),
-            "subdomains": {self.base_host},
-        }
-        self.cms: Dict[str, str] = {}
-        
+        self.assets: Dict[str, Set[Any]] = defaultdict(set)
         self.robot_parser = urllib.robotparser.RobotFileParser()
-        self.out_lock = asyncio.Lock()
-        self.out_file = open(cfg.out, "a", encoding="utf-8") if cfg.out else None
-        self.log = self._setup_logger()
-
-    def _setup_logger(self) -> logging.Logger:
-        logger = logging.getLogger(self.__class__.__name__)
-        if not logger.handlers:
-            logger.setLevel(logging.DEBUG if self.cfg.verbose else logging.INFO)
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S")
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-        return logger
-
-    async def emit(self, event_type: str, **data) -> None:
-        record = {"ts": datetime.now(timezone.utc).isoformat(), "type": event_type, **data}
-        line = json.dumps(record, ensure_ascii=False)
-        async with self.out_lock:
-            if self.cfg.verbose:
-                print(line)
-            if self.out_file:
-                self.out_file.write(line + "\n")
-                self.out_file.flush()
-
-    def normalize_url(self, base: str, url: str) -> Optional[str]:
-        try:
-            full_url = up.urljoin(base, url.strip())
-            parsed = up.urlparse(full_url)
-            
-            if parsed.scheme not in {"http", "https"}:
-                return None
-
-            path = re.sub(r'/+', '/', parsed.path) or '/'
-            clean_url = up.urlunparse((parsed.scheme, parsed.netloc.lower(), path, "", "", "")).rstrip('/')
-            return clean_url
-        except ValueError:
-            return None
-
-    async def fetch_robots(self):
-        robots_url = f"https://{self.cfg.target}/robots.txt"
-        self.log.info(f"Buscando {robots_url}")
-        try:
-            async with self.http_session.get(robots_url, timeout=self.cfg.timeout) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    self.robot_parser.parse(content.splitlines())
-                    self.log.info("robots.txt processado com sucesso.")
-                else:
-                    self.log.warning("robots.txt não encontrado ou inacessível.")
-        except Exception as e:
-            self.log.error(f"Falha ao buscar robots.txt: {e}")
-
-    async def discover_links(self, page: Page, base_url: str) -> Set[str]:
-        content = await page.content()
-        soup = BeautifulSoup(content, 'html.parser')
-        found_urls = set()
-
-        for tag in soup.find_all(['a', 'link', 'script', 'img', 'iframe', 'form'], 
-                                 href=True, src=True, action=True, **{'data-src': True}):
-            for attr in ['href', 'src', 'action', 'data-src']:
-                if url := tag.get(attr):
-                    found_urls.add(url)
-        
-        for match in URL_REGEX.finditer(content):
-            found_urls.add(match.group('url'))
-
-        normalized_urls = {norm_url for url in found_urls if (norm_url := self.normalize_url(base_url, url))}
-        return normalized_urls
-
-    async def process_url(self, page: Page, url: str, depth: int):
-        self.log.info(f"Processando [Profundidade: {depth}]: {url}")
-        try:
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=self.cfg.timeout * 1000)
-        except Exception as e:
-            self.log.warning(f"Falha ao navegar para {url}: {type(e).__name__}")
-            return
-
-        if response is None or not response.ok:
-            self.log.warning(f"Resposta não OK para {url}: Status {response.status if response else 'N/A'}")
-            return
-
-        parsed_url = up.urlparse(url)
-        if Path(parsed_url.path).suffix:
-            if url not in self.results["files"]:
-                self.results["files"].add(url)
-                await self.emit("file", url=url, status=response.status)
-        else:
-            if url not in self.results["endpoints"]:
-                self.results["endpoints"].add(url)
-                await self.emit("endpoint", url=url, status=response.status)
-
-        if depth < self.cfg.max_depth:
-            links = await self.discover_links(page, url)
-            for link in links:
-                parsed_link = up.urlparse(link)
-                if parsed_link.hostname and self.in_scope(parsed_link.hostname) and link not in self.visited:
-                    if self.robot_parser.can_fetch(self.http_session.headers.get("User-Agent"), link):
-                        if Path(parsed_link.path).suffix.lower() not in IGNORED_EXTENSIONS:
-                            await self.queue.put((link, depth + 1))
-                    else:
-                        self.log.info(f"Bloqueado por robots.txt: {link}")
-
-    async def worker(self, browser: Browser):
-        page = await browser.new_page()
-        while True:
-            url, depth = await self.queue.get()
-            if url in self.visited:
-                self.queue.task_done()
-                continue
-            
-            self.visited.add(url)
-            parsed_url = up.urlparse(url)
-            if parsed_url.hostname:
-                self.results["subdomains"].add(parsed_url.hostname)
-            
-            await self.process_url(page, url, depth)
-            self.queue.task_done()
-
-    async def run(self):
-        headers = {"User-Agent": f"ReconMapper/2.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"}
-        timeout = ClientTimeout(total=self.cfg.timeout)
-        self.http_session = aiohttp.ClientSession(headers=headers, timeout=timeout)
-
-        await self.fetch_robots()
-
+        self._categories = {"directories","files","inputs","parameters","api_endpoints","source_files","subdomains"}
+        for c in self._categories: self.assets[c] = set()
+        self.assets["subdomains"].add(self.base_host)
+    async def run(self) -> None:
+        if self.cfg.out: Path(self.cfg.out).write_text("")
+        await self._bootstrap()
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.cfg.headless)
-            start_url = self.normalize_url(f"https://{self.cfg.target}", "")
-            await self.queue.put((start_url, 0))
-
-            tasks = [asyncio.create_task(self.worker(browser)) for _ in range(self.cfg.threads)]
-
+            try: await self._crawl(browser)
+            finally: await browser.close()
+        self._summarise()
+    def _found(self, cat: str, val: str) -> None:
+        if val not in self.assets[cat]:
+            self.assets[cat].add(val)
+            if self.cfg.verbose: self.log.debug(f"[{cat}] {val}")
+    async def _bootstrap(self) -> None:
+        async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}, timeout=ClientTimeout(total=self.cfg.timeout)) as s:
+            robots_url = urlunparse(("https", self.cfg.target, "/robots.txt", "", "", ""))
+            try:
+                async with s.get(robots_url) as r:
+                    if r.status==200:
+                        self.robot_parser.parse((await r.text()).splitlines())
+                        for sm in self.robot_parser.sitemaps or []: await self._process_sitemap(s, sm)
+            except: pass
+            if self.cfg.wayback: await self._enqueue_wayback(s)
+        await self._enqueue(urlunparse(("https", self.cfg.target, "/", "", "", "")),0)
+    async def _process_sitemap(self,s:aiohttp.ClientSession,u:str)->None:
+        try:
+            async with s.get(u) as r:
+                if r.status!=200: return
+                ns={"ns":"http://www.sitemaps.org/schemas/sitemap/0.9"}
+                for n in ET.fromstring(await r.text()).findall("ns:url",ns):
+                    loc=n.findtext("ns:loc",default="",namespaces=ns)
+                    if loc: await self._enqueue(loc.strip(),0)
+        except: pass
+    async def _enqueue_wayback(self,s:aiohttp.ClientSession)->None:
+        wb=f"http://web.archive.org/cdx/search/cdx?url=*.{self.base_host}/*&output=json&fl=original&collapse=urlkey"
+        try:
+            async with s.get(wb) as r:
+                if r.status!=200: return
+                for item in (await r.json())[1:]: await self._enqueue(item[0],0)
+        except: pass
+    async def _crawl(self,browser:Browser)->None:
+        workers=[asyncio.create_task(self._worker(browser)) for _ in range(self.cfg.threads)]
+        with Progress(SpinnerColumn(),*Progress.get_default_columns(),BarColumn(),TextColumn("[cyan]{task.description}"),console=self.console) as prog:
+            task=prog.add_task("Crawling",total=None)
             await self.queue.join()
-
-            for task in tasks:
-                task.cancel()
-            
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await browser.close()
-
-        await self.http_session.close()
-        if self.out_file:
-            self.out_file.close()
-
+            for _ in workers: await self.queue.put(("",-1))
+            await asyncio.gather(*workers,return_exceptions=True)
+            prog.update(task,description="✔ Done",total=1,completed=1)
+    async def _worker(self,browser:Browser)->None:
+        ctx=await browser.new_context(user_agent=USER_AGENT,ignore_https_errors=True)
+        page=await ctx.new_page()
+        page.on("response",self._on_response)
+        async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT},timeout=ClientTimeout(total=self.cfg.timeout)) as s:
+            while True:
+                url,depth=await self.queue.get()
+                if depth<0: self.queue.task_done(); break
+                try:
+                    if depth<self.cfg.max_depth:
+                        if await self._is_html(s,url): await self._handle_html(page,url,depth)
+                        else: await self._handle_static(s,url)
+                finally: self.queue.task_done()
+        await page.close(); await ctx.close()
+    async def _handle_html(self,page:Page,url:str,depth:int)->None:
+        try: await page.goto(url,wait_until="domcontentloaded",timeout=self.cfg.timeout*1000)
+        except PlaywrightTimeoutError: return
+        for link in await self._extract_links(await page.content(),page.url): await self._enqueue(link,depth+1)
+    async def _handle_static(self,s:aiohttp.ClientSession,url:str)->None:
+        try:
+            async with s.get(url) as r:
+                if r.ok and "javascript" in r.headers.get("content-type",""):
+                    js=await r.text()
+                    for m in URL_REGEX.finditer(js): await self._enqueue(urljoin(url,m.group("url")),0)
+                    await self._fetch_sourcemap(s,url)
+        except: pass
+    async def _fetch_sourcemap(self,s:aiohttp.ClientSession,js_url:str)->None:
+        try:
+            async with s.get(f"{js_url}.map") as r:
+                if r.status==200:
+                    for src in (await r.json()).get("sources",[]): self._found("source_files",src)
+        except: pass
+    async def _is_html(self,s:aiohttp.ClientSession,url:str)->bool:
+        try:
+            async with s.head(url,allow_redirects=True,timeout=5) as r:
+                return "text/html" in r.headers.get("content-type","")
+        except: return True
+    async def _extract_links(self,html:str,base:str)->Set[str]:
+        soup=BeautifulSoup(html,"html.parser"); links:Set[str]=set()
+        for tag in soup.find_all(["input","textarea","select","form"]):
+            name=tag.get("name") or tag.get("id")
+            if name: self._found("inputs",f"{tag.name}:{name}:{tag.get('type') if tag.name=='input' else tag.name}")
+        raw={tag.get(a) for tag in soup.find_all(True,href=True) for a in ("href","src","action","data-src") if tag.get(a)}
+        raw.update(m.group("url") for m in URL_REGEX.finditer(html))
+        for u in raw:
+            full=urljoin(base,u.strip()); p=urlparse(full)
+            for param in parse_qs(p.query): self._found("parameters",param)
+            path=p.path or "/"
+            if path!="/" and Path(path).suffix: self._found("files",path)
+            for d in Path(path).parents:
+                if str(d)!=".": self._found("directories",str(d))
+            links.add(full)
+        return links
+    async def _on_response(self,r:Response)->None:
+        if "application/json" in r.headers.get("content-type","").lower(): self._found("api_endpoints",r.url)
+    async def _enqueue(self,url:str,depth:int)->None:
+        p=urlparse(url)
+        if not p.scheme.startswith("http"): return
+        if p.hostname and not (p.hostname==self.base_host or p.hostname.endswith("."+self.base_host)): return
+        if Path(p.path).suffix.lower() in IGNORED_EXTENSIONS: return
+        if not self.robot_parser.can_fetch(USER_AGENT,url): return
+        norm=urlunparse((p.scheme,p.netloc.lower(),re.sub(r'/+','/',p.path) or '/', "","", ""))
+        if norm not in self.visited:
+            self.visited.add(norm)
+            self.queue.put_nowait((url,depth))
+            if self.cfg.verbose: self.log.debug(f"[queue] D={depth} {url}")
+    def _summarise(self)->None:
         if self.cfg.summary:
-            summary_data = {k: sorted(v) for k, v in self.results.items()}
-            summary_data["cms"] = self.cms
-            summary_data["generated"] = datetime.now(timezone.utc).isoformat()
-            Path(self.cfg.summary).write_text(json.dumps(summary_data, indent=2, ensure_ascii=False))
+            data={k:sorted(v) for k,v in self.assets.items() if v}
+            data["generated_at"]=datetime.now(timezone.utc).isoformat()
+            Path(self.cfg.summary).write_text(json.dumps(data,ensure_ascii=False,indent=2))
+        t=Table(title="ReconMapper Summary"); t.add_column("Asset"); t.add_column("Count",justify="right")
+        for k,v in sorted(self.assets.items()): t.add_row(k,str(len(v)))
+        self.console.print(t)
 
-        self.log.info(f"FINALIZADO - Endpoints: {len(self.results['endpoints'])} | Arquivos: {len(self.results['files'])} | Subdomínios: {len(self.results['subdomains'])}")
+def parse_args()->Cfg:
+    p=argparse.ArgumentParser(description="ReconMapper – async crawler")
+    p.add_argument("-t","--target",required=True)
+    p.add_argument("-T","--threads",type=int,default=10)
+    p.add_argument("--timeout",type=int,default=15)
+    p.add_argument("--max-depth",type=int,default=5)
+    p.add_argument("--headless",action=argparse.BooleanOptionalAction,default=True)
+    p.add_argument("-o","--out"); p.add_argument("--summary")
+    p.add_argument("--wayback",action="store_true")
+    p.add_argument("-v","--verbose",action="store_true")
+    args=p.parse_args()
+    if not (1<=args.threads<=MAX_THREADS): args.threads=10
+    domain=urlparse(f"https://{args.target}").hostname or ""
+    if not domain: raise SystemExit("Invalid target")
+    return Cfg(domain,args.threads,args.timeout,args.max_depth,args.out,args.summary,args.verbose,args.headless,args.wayback)
 
+def main()->None:
+    cfg=parse_args()
+    try: asyncio.run(ReconMapper(cfg).run())
+    except KeyboardInterrupt: print("Interrupted")
 
-def main():
-    parser = argparse.ArgumentParser(description="ReconMapper v2.0 - Um crawler web avançado.")
-    parser.add_argument("-t", "--target", required=True, help="O domínio alvo, sem 'https://'.")
-    parser.add_argument("-T", "--threads", type=int, default=10, help="Número de workers paralelos.")
-    parser.add_argument("--timeout", type=int, default=15, help="Timeout em segundos para cada requisição.")
-    parser.add_argument("--max-depth", type=int, default=5, help="Profundidade máxima de rastreamento.")
-    parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True, help="Executar o navegador em modo headless (sem interface gráfica).")
-    parser.add_argument("-o", "--out", help="Arquivo de saída para eventos JSON (streaming).")
-    parser.add_argument("--summary", help="Arquivo JSON de saída com o resumo final.")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Ativa logs detalhados e eventos na tela.")
-    
-    args = parser.parse_args()
-
-    cfg = Cfg(
-        target=args.target,
-        threads=args.threads,
-        timeout=args.timeout,
-        max_depth=args.max_depth,
-        out=args.out,
-        summary=args.summary,
-        verbose=args.verbose,
-        headless=args.headless
-    )
-    
-    try:
-        asyncio.run(ReconMapper(cfg).run())
-    except KeyboardInterrupt:
-        print("\nVarredura interrompida pelo usuário.")
-    except Exception as e:
-        logging.getLogger(__name__).critical(f"Um erro fatal ocorreu: {e}", exc_info=True)
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__": main()
