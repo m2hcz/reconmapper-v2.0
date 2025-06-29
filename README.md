@@ -108,23 +108,6 @@ python recon_mapper.py \
 ```
 
 ---
-
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Run tests & lint: `pytest && ruff .`
-5. Open a Pull Request
-
----
-
-## 🛡 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
----
-
 ## 🧭 Roadmap
 
 * [ ] CSV/HTML export
