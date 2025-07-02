@@ -53,6 +53,7 @@ class ReconMapper:
         self._categories = {"directories","files","inputs","parameters","api_endpoints","source_files","subdomains"}
         for c in self._categories: self.assets[c] = set()
         self.assets["subdomains"].add(self.base_host)
+        
     async def run(self) -> None:
         if self.cfg.out: Path(self.cfg.out).write_text("")
         await self._bootstrap()
@@ -61,10 +62,12 @@ class ReconMapper:
             try: await self._crawl(browser)
             finally: await browser.close()
         self._summarise()
+        
     def _found(self, cat: str, val: str) -> None:
         if val not in self.assets[cat]:
             self.assets[cat].add(val)
             if self.cfg.verbose: self.log.debug(f"[{cat}] {val}")
+                
     async def _bootstrap(self) -> None:
         async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}, timeout=ClientTimeout(total=self.cfg.timeout)) as s:
             robots_url = urlunparse(("https", self.cfg.target, "/robots.txt", "", "", ""))
@@ -76,6 +79,7 @@ class ReconMapper:
             except: pass
             if self.cfg.wayback: await self._enqueue_wayback(s)
         await self._enqueue(urlunparse(("https", self.cfg.target, "/", "", "", "")),0)
+        
     async def _process_sitemap(self,s:aiohttp.ClientSession,u:str)->None:
         try:
             async with s.get(u) as r:
@@ -92,6 +96,7 @@ class ReconMapper:
                 if r.status!=200: return
                 for item in (await r.json())[1:]: await self._enqueue(item[0],0)
         except: pass
+            
     async def _crawl(self,browser:Browser)->None:
         workers=[asyncio.create_task(self._worker(browser)) for _ in range(self.cfg.threads)]
         with Progress(SpinnerColumn(),*Progress.get_default_columns(),BarColumn(),TextColumn("[cyan]{task.description}"),console=self.console) as prog:
@@ -100,6 +105,7 @@ class ReconMapper:
             for _ in workers: await self.queue.put(("",-1))
             await asyncio.gather(*workers,return_exceptions=True)
             prog.update(task,description="✔ Done",total=1,completed=1)
+            
     async def _worker(self,browser:Browser)->None:
         ctx=await browser.new_context(user_agent=USER_AGENT,ignore_https_errors=True)
         page=await ctx.new_page()
@@ -114,10 +120,12 @@ class ReconMapper:
                         else: await self._handle_static(s,url)
                 finally: self.queue.task_done()
         await page.close(); await ctx.close()
+        
     async def _handle_html(self,page:Page,url:str,depth:int)->None:
         try: await page.goto(url,wait_until="domcontentloaded",timeout=self.cfg.timeout*1000)
         except PlaywrightTimeoutError: return
         for link in await self._extract_links(await page.content(),page.url): await self._enqueue(link,depth+1)
+            
     async def _handle_static(self,s:aiohttp.ClientSession,url:str)->None:
         try:
             async with s.get(url) as r:
@@ -126,17 +134,20 @@ class ReconMapper:
                     for m in URL_REGEX.finditer(js): await self._enqueue(urljoin(url,m.group("url")),0)
                     await self._fetch_sourcemap(s,url)
         except: pass
+            
     async def _fetch_sourcemap(self,s:aiohttp.ClientSession,js_url:str)->None:
         try:
             async with s.get(f"{js_url}.map") as r:
                 if r.status==200:
                     for src in (await r.json()).get("sources",[]): self._found("source_files",src)
         except: pass
+            
     async def _is_html(self,s:aiohttp.ClientSession,url:str)->bool:
         try:
             async with s.head(url,allow_redirects=True,timeout=5) as r:
                 return "text/html" in r.headers.get("content-type","")
         except: return True
+            
     async def _extract_links(self,html:str,base:str)->Set[str]:
         soup=BeautifulSoup(html,"html.parser"); links:Set[str]=set()
         for tag in soup.find_all(["input","textarea","select","form"]):
@@ -153,8 +164,10 @@ class ReconMapper:
                 if str(d)!=".": self._found("directories",str(d))
             links.add(full)
         return links
+        
     async def _on_response(self,r:Response)->None:
         if "application/json" in r.headers.get("content-type","").lower(): self._found("api_endpoints",r.url)
+            
     async def _enqueue(self,url:str,depth:int)->None:
         p=urlparse(url)
         if not p.scheme.startswith("http"): return
@@ -166,6 +179,7 @@ class ReconMapper:
             self.visited.add(norm)
             self.queue.put_nowait((url,depth))
             if self.cfg.verbose: self.log.debug(f"[queue] D={depth} {url}")
+                
     def _summarise(self)->None:
         if self.cfg.summary:
             data={k:sorted(v) for k,v in self.assets.items() if v}
