@@ -441,7 +441,7 @@ ReconMapper is designed for **authorized security testing and research purposes 
 
 ## 📞 Support & Contact
 
-- 📧 **Email**: [security@yourorg.com](m2hczs@proton.me)
+- 📧 **Email**: [m2hczs@proton.me](m2hczs@proton.me)
 - 💬 **Discord**: [My discord](s0yvenn)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/m2hcz/reconmapper-v2.0/issues)
 ---
