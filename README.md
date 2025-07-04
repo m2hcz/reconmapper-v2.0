@@ -431,12 +431,6 @@ flake8 mapcrawller.py
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
 ## 🛡️ Legal Disclaimer
 
 ReconMapper is designed for **authorized security testing and research purposes only**. Users are responsible for complying with all applicable laws and regulations. The authors and contributors are not responsible for any misuse or damage caused by this tool.
