@@ -285,7 +285,3 @@ PRs welcome! Please run `ruff`/`black` (if configured) and include:
 * Docs updates where applicable
 
 ---
-
-## License
-
-MIT — see [LICENSE](LICENSE).
