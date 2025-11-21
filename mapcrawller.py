@@ -378,8 +378,6 @@ class ReconCrawler:
         for k in parse_qs(q):
             self.state.add_asset("parameters", k, url, "query_param")
 
-# --- Main ---
-
 async def main_async():
     parser = argparse.ArgumentParser(description="ReconMapper Pro - Advanced Asset Discovery")
     parser.add_argument("target", help="Domain or URL to scan")
