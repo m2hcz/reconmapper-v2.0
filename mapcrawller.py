@@ -6,69 +6,85 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
 import re
 import random
 import ssl
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Set, List, Optional, Tuple, Pattern, Any
-from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
+from typing import Dict, Set, List, Optional, Tuple, Any
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse, unquote
 
-import aiohttp
-from aiohttp import ClientSession, TCPConnector, ClientTimeout
-from bs4 import BeautifulSoup
-from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+try:
+    import aiohttp
+    from aiohttp import ClientSession, TCPConnector, ClientTimeout
+    from bs4 import BeautifulSoup
+    from rich.console import Console
+    from rich.layout import Layout
+    from rich.live import Live
+    from rich.panel import Panel
+    from rich.table import Table
+except ImportError as e:
+    print(f"Missing dependency: {e}")
+    print("Install with: pip install aiohttp beautifulsoup4 rich")
+    sys.exit(1)
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
 
 IGNORED_EXTENSIONS = {
-    ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", 
-    ".ttf", ".eot", ".mp4", ".mp3", ".pdf", ".zip", ".gz", ".tar", ".rar", ".webp", ".xml"
+    ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2",
+    ".ttf", ".eot", ".mp4", ".mp3", ".pdf", ".zip", ".gz", ".tar", ".rar",
+    ".webp", ".xml", ".bmp", ".tiff", ".otf", ".mov", ".avi", ".wmv", ".flv"
 }
 
-URL_PATTERN: Pattern = re.compile(
-    r"(?:\"|')(((?:[a-zA-Z]{1,10}://|//)[^\"'/]{1,}\.[a-zA-Z]{2,}[^\"']{0,})|((?:/|\.\./|\./)[a-zA-Z0-9\-_./?=&%]{2,}))(?:\"|')"
+URL_REGEX = re.compile(
+    r"""(?:"|'|`)(((?:[a-zA-Z]{1,10}://|//)[^"'`\s]{1,}\.[a-zA-Z]{2,}[^"'`\s]*)|((?:/|\.\./|\./)[^"'`\s]*?))(?:"|'|`)""",
+    re.IGNORECASE
 )
 
-EMAIL_PATTERN: Pattern = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+PATH_REGEX = re.compile(r'(?:href|src|action|data-url|data-src)=["\']([^"\']+)["\']', re.IGNORECASE)
 
-@dataclass(slots=True)
-class Configuration:
-    input_target: str
-    threads: int
-    timeout: int
-    max_depth: int
-    output_file: Optional[Path]
-    verbose: bool
-    use_wayback: bool
-    ignore_ssl: bool = True
-    headers: Dict[str, str] = field(default_factory=lambda: {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "User-Agent": random.choice(USER_AGENTS)
-    })
+EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+API_REGEX = re.compile(r'["\'](/api/[^"\']+)["\']', re.IGNORECASE)
+
+SECRET_PATTERNS = [
+    (re.compile(r'(?:api[_-]?key|apikey)["\']?\s*[:=]\s*["\']([a-zA-Z0-9_\-]{20,})["\']', re.I), "api_key"),
+    (re.compile(r'(?:secret|token|password|passwd|pwd)["\']?\s*[:=]\s*["\']([^"\']{8,})["\']', re.I), "secret"),
+    (re.compile(r'(?:aws_access_key_id)["\']?\s*[:=]\s*["\']([A-Z0-9]{20})["\']', re.I), "aws_key"),
+]
+
 
 @dataclass
-class AssetDetail:
-    value: str
-    source_url: str
-    context: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+class Config:
+    target: str
+    threads: int = 15
+    timeout: int = 15
+    max_depth: int = 4
+    output_file: Optional[Path] = None
+    verbose: bool = False
+    use_wayback: bool = False
+    headers: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not self.headers:
+            self.headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "User-Agent": random.choice(USER_AGENTS),
+                "Cache-Control": "no-cache",
+            }
+
 
 class StateManager:
     def __init__(self, verbose: bool = False):
@@ -76,321 +92,616 @@ class StateManager:
         self.urls_processed = 0
         self.urls_failed = 0
         self.queue_size = 0
-        self.current_url = "Starting..."
+        self.current_url = "Initializing..."
         self.start_time = datetime.now()
-        
         self.assets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self.seen_assets: Set[str] = set()
-        
+        self.seen_values: Dict[str, Set[str]] = defaultdict(set)
         self.logs: List[str] = []
         self.root_domain: str = ""
-        
-    def add_asset(self, category: str, value: str, source: str, context: str = "generic"):
-        if not value or len(value) > 500: return
-        
-        unique_key = f"{category}:{value}:{source}"
-        
-        if unique_key not in self.seen_assets:
-            self.seen_assets.add(unique_key)
-            
-            asset_obj = {
+        self.is_running = True
+        self.lock = asyncio.Lock()
+
+    async def add_asset(self, category: str, value: str, source: str, context: str = ""):
+        if not value or len(value) > 1000:
+            return
+
+        value = value.strip()
+        if not value:
+            return
+
+        async with self.lock:
+            if value in self.seen_values[category]:
+                return
+
+            self.seen_values[category].add(value)
+            self.assets[category].append({
                 "value": value,
                 "source": source,
                 "context": context,
-                "found_at": datetime.now().isoformat()
-            }
-            self.assets[category].append(asset_obj)
-            
-            if category in ["api_endpoints", "secrets", "forms"]:
-                self.log(f"[green]Found {category}:[/] {value[:40]}...")
+                "timestamp": datetime.now().isoformat()
+            })
+
+            if category in ["api_endpoints", "secrets", "subdomains", "forms"]:
+                display = value[:60] + "..." if len(value) > 60 else value
+                self.log(f"[green]+[/] {category}: {display}")
 
     def log(self, message: str, force: bool = False):
-        if "[dim]" in message and not self.verbose and not force:
+        if not self.verbose and not force and "[dim]" in message:
             return
 
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.logs.append(f"[{timestamp}] {message}")
-        if len(self.logs) > 8:
+        ts = datetime.now().strftime("%H:%M:%S")
+        entry = f"[dim]{ts}[/] {message}"
+        self.logs.append(entry)
+        if len(self.logs) > 12:
             self.logs.pop(0)
 
     def get_duration(self) -> str:
         diff = datetime.now() - self.start_time
-        seconds = int(diff.total_seconds())
-        return f"{seconds // 60:02d}:{seconds % 60:02d}"
+        secs = int(diff.total_seconds())
+        return f"{secs // 60:02d}:{secs % 60:02d}"
 
-class InterfaceManager:
-    def __init__(self, state: StateManager, config: Configuration):
+    def get_stats(self) -> Dict[str, int]:
+        return {cat: len(items) for cat, items in self.assets.items()}
+
+
+class UIManager:
+    def __init__(self, state: StateManager, config: Config):
         self.state = state
         self.config = config
-        self.layout = Layout()
-        self._setup_layout()
+        self.console = Console()
 
-    def _setup_layout(self):
-        self.layout.split(
+    def create_layout(self) -> Layout:
+        layout = Layout()
+        layout.split(
             Layout(name="header", size=3),
-            Layout(name="main", ratio=1),
-            Layout(name="footer", size=10)
+            Layout(name="body", ratio=1),
+            Layout(name="logs", size=14)
         )
-        self.layout["main"].split_row(
+        layout["body"].split_row(
             Layout(name="stats", ratio=1),
-            Layout(name="assets", ratio=1)
+            Layout(name="findings", ratio=1)
         )
+        return layout
 
     def render(self) -> Layout:
-        target_display = self.state.root_domain if self.state.root_domain else self.config.input_target
-        header_style = "white on red" if self.state.urls_failed > 50 else "white on blue"
-        
-        self.layout["header"].update(Panel(f"ReconMapper Pro v2.1 | Target: [bold]{target_display}[/]", style=header_style))
-        
-        # Stats
-        stats = Table(show_header=False, box=None, expand=True)
-        stats.add_row("Status", "[green]Running[/]" if self.state.queue_size > 0 else "[yellow]Finalizing[/]")
-        stats.add_row("Processed", f"{self.state.urls_processed}")
-        stats.add_row("Failed", f"[red]{self.state.urls_failed}[/]")
-        stats.add_row("Queue", f"{self.state.queue_size}")
-        stats.add_row("Current", f"[dim]{self.state.current_url[:50]}[/]")
-        
-        if self.config.verbose:
-            stats.add_row("Mode", "[bold cyan]VERBOSE[/]")
+        layout = self.create_layout()
 
-        self.layout["stats"].update(Panel(stats, title="Statistics", border_style="green"))
+        target = self.state.root_domain or self.config.target
+        status_color = "green" if self.state.is_running else "yellow"
+        header_style = "bold white on blue"
+        if self.state.urls_failed > 100:
+            header_style = "bold white on red"
 
-        # Assets Table
-        table = Table(show_header=True, expand=True, header_style="bold magenta")
-        table.add_column("Category")
-        table.add_column("Unique", justify="right")
-        
+        layout["header"].update(
+            Panel(
+                f"[bold]ReconMapper Pro[/] | Target: [cyan]{target}[/] | Status: [{status_color}]{'Running' if self.state.is_running else 'Done'}[/]",
+                style=header_style
+            )
+        )
+
+        stats_table = Table(show_header=False, box=None, expand=True, padding=(0, 1))
+        stats_table.add_column("Key", style="bold")
+        stats_table.add_column("Value")
+
+        stats_table.add_row("Duration", f"[cyan]{self.state.get_duration()}[/]")
+        stats_table.add_row("Processed", f"[green]{self.state.urls_processed}[/]")
+        stats_table.add_row("Failed", f"[red]{self.state.urls_failed}[/]")
+        stats_table.add_row("Queue", f"[yellow]{self.state.queue_size}[/]")
+        stats_table.add_row("Threads", f"{self.config.threads}")
+
+        current = self.state.current_url
+        if len(current) > 45:
+            current = current[:42] + "..."
+        stats_table.add_row("Current", f"[dim]{current}[/]")
+
+        layout["stats"].update(Panel(stats_table, title="Status", border_style="blue"))
+
+        findings_table = Table(show_header=True, expand=True, header_style="bold magenta")
+        findings_table.add_column("Category", style="cyan")
+        findings_table.add_column("Count", justify="right", style="green")
+
         total = 0
-        for cat, items in self.state.assets.items():
-            unique_values = len(set(i['value'] for i in items))
-            total += unique_values
-            if unique_values > 0:
-                table.add_row(cat.replace("_", " ").title(), str(unique_values))
-        
-        table.add_row("TOTAL UNIQUE", str(total), style="bold")
-        self.layout["assets"].update(Panel(table, title="Findings (Detailed)", border_style="magenta"))
+        categories = [
+            "subdomains", "api_endpoints", "forms", "parameters",
+            "files", "emails", "secrets", "app_routes", "urls"
+        ]
 
-        # Logs
-        self.layout["footer"].update(Panel("\n".join(self.state.logs), title="Event Logs", border_style="grey50"))
-        return self.layout
+        for cat in categories:
+            count = len(self.state.assets.get(cat, []))
+            if count > 0:
+                findings_table.add_row(cat.replace("_", " ").title(), str(count))
+                total += count
 
-class ReconCrawler:
-    def __init__(self, config: Configuration, state: StateManager):
+        findings_table.add_row("─" * 15, "─" * 5, style="dim")
+        findings_table.add_row("[bold]Total[/]", f"[bold]{total}[/]")
+
+        layout["findings"].update(Panel(findings_table, title="Findings", border_style="magenta"))
+
+        log_content = "\n".join(self.state.logs) if self.state.logs else "[dim]Waiting for events...[/]"
+        layout["logs"].update(Panel(log_content, title="Activity Log", border_style="dim"))
+
+        return layout
+
+
+class Crawler:
+    def __init__(self, config: Config, state: StateManager):
         self.config = config
         self.state = state
         self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
         self.visited: Set[str] = set()
-        self.base_domain = ""
+        self.base_domain: str = ""
+        self.base_url: str = ""
         self.session: Optional[ClientSession] = None
+        self.running = True
 
-    async def run(self):
-        ssl_ctx = ssl.create_default_context()
-        if self.config.ignore_ssl:
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
-
-        connector = TCPConnector(limit=self.config.threads, ssl=ssl_ctx)
-        timeout_val = None if self.config.timeout == 0 else self.config.timeout
-        client_timeout = ClientTimeout(total=timeout_val, connect=10)
-
-        async with ClientSession(connector=connector, headers=self.config.headers, timeout=client_timeout, cookie_jar=aiohttp.CookieJar(unsafe=True)) as session:
-            self.session = session
-            await self._pre_flight()
-
-            if self.config.use_wayback and self.base_domain:
-                asyncio.create_task(self._fetch_wayback())
-
-            workers = [asyncio.create_task(self._worker()) for _ in range(self.config.threads)]
-            await self.queue.join()
-            
-            for w in workers: w.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
-
-    async def _pre_flight(self):
-        target = self.config.input_target
-        if not target.startswith(("http://", "https://")):
-            target = f"https://{target}"
-        
-        self.state.log(f"Pre-flight check: {target}", force=True)
+    def normalize_url(self, url: str, base: str = "") -> Optional[str]:
         try:
-            async with self.session.get(target, allow_redirects=True) as resp:
+            url = url.strip()
+            if not url:
+                return None
+
+            if url.startswith("javascript:") or url.startswith("mailto:") or url.startswith("data:"):
+                return None
+
+            if url.startswith("//"):
+                url = "https:" + url
+            elif not url.startswith(("http://", "https://")):
+                if base:
+                    url = urljoin(base, url)
+                else:
+                    return None
+
+            parsed = urlparse(url)
+            if not parsed.netloc:
+                return None
+
+            path = parsed.path or "/"
+            normalized = urlunparse((
+                parsed.scheme,
+                parsed.netloc.lower(),
+                path,
+                "",
+                parsed.query,
+                ""
+            ))
+
+            return normalized
+
+        except Exception:
+            return None
+
+    def is_in_scope(self, url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+            netloc = parsed.netloc.lower().replace("www.", "")
+
+            if not self.base_domain:
+                return False
+
+            return netloc == self.base_domain or netloc.endswith("." + self.base_domain)
+
+        except Exception:
+            return False
+
+    def is_valid_path(self, path: str) -> bool:
+        if not path:
+            return True
+
+        suffix = Path(path).suffix.lower()
+        return suffix not in IGNORED_EXTENSIONS
+
+    async def initialize(self):
+        target = self.config.target
+        if not target.startswith(("http://", "https://")):
+            target = "https://" + target
+
+        self.state.log(f"Initializing scan for: {target}", force=True)
+
+        try:
+            async with self.session.get(target, allow_redirects=True, timeout=ClientTimeout(total=20)) as resp:
                 final_url = str(resp.url)
                 parsed = urlparse(final_url)
-                
-                self.base_domain = parsed.netloc.replace("www.", "")
+
+                self.base_domain = parsed.netloc.lower().replace("www.", "")
+                self.base_url = f"{parsed.scheme}://{parsed.netloc}"
                 self.state.root_domain = self.base_domain
-                
-                if self.config.verbose:
-                    self.state.log(f"Redirected to: {final_url} ({resp.status})")
-                
-                self.state.log(f"Scope locked to: *.{self.base_domain}", force=True)
-                await self.add_url(final_url, 0)
+
+                self.state.log(f"[green]Connected![/] Base: {self.base_domain}", force=True)
+
+                await self.enqueue(final_url, 0)
+
+                try:
+                    html = await resp.text(errors="ignore")
+                    await self.extract_from_html(html, final_url, 0)
+                except Exception:
+                    pass
+
         except Exception as e:
-            self.state.log(f"[red]Pre-flight Failed: {e}[/]", force=True)
-            # Fallback
+            self.state.log(f"[red]Connection failed: {e}[/]", force=True)
             parsed = urlparse(target)
-            self.base_domain = parsed.netloc.replace("www.", "")
+            self.base_domain = parsed.netloc.lower().replace("www.", "")
+            self.base_url = f"{parsed.scheme}://{parsed.netloc}"
             self.state.root_domain = self.base_domain
-            await self.add_url(target, 0)
+            await self.enqueue(target, 0)
 
-    async def _fetch_wayback(self):
-        if self.config.verbose: self.state.log("Starting Wayback Machine fetch...")
-        url = f"http://web.archive.org/cdx/search/cdx?url=*.{self.base_domain}/*&output=json&fl=original&collapse=urlkey&limit=300"
-        try:
-            async with self.session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    count = 0
-                    for item in data[1:]:
-                        if count < 200:
-                            await self.add_url(item[0], 1)
-                            count += 1
-                    self.state.log(f"Wayback: Found {count} historical URLs", force=True)
-        except: 
-            if self.config.verbose: self.state.log("[yellow]Wayback fetch failed[/]")
-
-    async def add_url(self, url: str, depth: int):
-        if depth > self.config.max_depth: return
-        try:
-            url = url.split("#")[0]
-            parsed = urlparse(url)
-        except: return
-
-        if not self.base_domain: return
-        
-        is_scope = self.base_domain in (parsed.netloc or "")
-        if not is_scope:
-            if parsed.netloc and self.base_domain in parsed.netloc:
-                self.state.add_asset("subdomains", parsed.netloc, "N/A", "DNS/Link")
+    async def enqueue(self, url: str, depth: int):
+        if depth > self.config.max_depth:
             return
 
-        if self._is_ignored(parsed.path): return
+        normalized = self.normalize_url(url)
+        if not normalized:
+            return
 
-        normalized = urlunparse(parsed)
-        if normalized not in self.visited:
-            self.visited.add(normalized)
-            await self.queue.put((normalized, depth))
-            self.state.queue_size = self.queue.qsize()
+        if not self.is_in_scope(normalized):
+            return
 
-    def _is_ignored(self, path: str) -> bool:
-        return Path(path).suffix.lower() in IGNORED_EXTENSIONS
+        parsed = urlparse(normalized)
+        if not self.is_valid_path(parsed.path):
+            return
 
-    async def _worker(self):
-        while True:
+        key = normalized.split("?")[0]
+        if key in self.visited:
+            return
+
+        self.visited.add(key)
+        await self.queue.put((normalized, depth))
+        self.state.queue_size = self.queue.qsize()
+
+        netloc = parsed.netloc.lower().replace("www.", "")
+        if netloc != self.base_domain and netloc.endswith("." + self.base_domain):
+            await self.state.add_asset("subdomains", netloc, url, "discovered")
+
+    async def fetch_wayback(self):
+        if not self.base_domain:
+            return
+
+        self.state.log("Fetching Wayback Machine archives...", force=True)
+
+        url = f"https://web.archive.org/cdx/search/cdx?url=*.{self.base_domain}/*&output=json&fl=original&collapse=urlkey&limit=500"
+
+        try:
+            async with self.session.get(url, timeout=ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    return
+
+                data = await resp.json()
+                count = 0
+
+                for item in data[1:]:
+                    if count >= 300:
+                        break
+                    try:
+                        archived_url = item[0]
+                        await self.enqueue(archived_url, 1)
+                        count += 1
+                    except Exception:
+                        continue
+
+                self.state.log(f"[green]Wayback:[/] Added {count} URLs", force=True)
+
+        except Exception as e:
+            self.state.log(f"[yellow]Wayback failed: {e}[/]")
+
+    async def worker(self, worker_id: int):
+        while self.running:
             try:
-                url, depth = await self.queue.get()
-                self.state.current_url = url
-                self.state.queue_size = self.queue.qsize()
-                try:
-                    await self._process(url, depth)
-                    self.state.urls_processed += 1
-                except Exception as e:
-                    self.state.urls_failed += 1
-                    if self.config.verbose: self.state.log(f"[red]Err[/] {url}: {e}")
-                finally:
-                    self.queue.task_done()
+                url, depth = await asyncio.wait_for(self.queue.get(), timeout=2.0)
+            except asyncio.TimeoutError:
+                if self.queue.empty():
+                    await asyncio.sleep(0.5)
+                continue
             except asyncio.CancelledError:
                 break
 
-    async def _process(self, url: str, depth: int):
-        try:
-            async with self.session.get(url, allow_redirects=True) as resp:
-                if self.config.verbose:
-                    color = "green" if resp.status < 300 else ("yellow" if resp.status < 400 else "red")
-                    self.state.log(f"[{color}]{resp.status}[/] {url}")
+            self.state.current_url = url
+            self.state.queue_size = self.queue.qsize()
 
-                text = await resp.text(errors="ignore")
-                
-                self._extract_qs(str(resp.url))
-                
-                content_type = resp.headers.get("Content-Type", "").lower()
-                
-                if "text/html" in content_type:
-                    await self._parse_html(text, str(resp.url), depth)
-                
-                await self._regex_extract(text, str(resp.url))
-        except Exception as e:
-            raise e
-
-    async def _parse_html(self, html: str, base: str, depth: int):
-        soup = BeautifulSoup(html, "html.parser")
-        
-        # Next.js Data
-        data = soup.find("script", id="__NEXT_DATA__")
-        if data:
             try:
-                j = json.loads(data.string)
-                self._recursive_json(j, base)
-                if self.config.verbose: self.state.log(f"[cyan]Parsed __NEXT_DATA__ in {base}[/]")
-            except: pass
+                await self.process_url(url, depth)
+                self.state.urls_processed += 1
+            except Exception as e:
+                self.state.urls_failed += 1
+                if self.config.verbose:
+                    self.state.log(f"[red]Error:[/] {str(e)[:50]}")
+            finally:
+                self.queue.task_done()
 
-        b_tag = soup.find("base")
-        if b_tag and b_tag.get("href"):
-            base = urljoin(base, b_tag.get("href"))
+    async def process_url(self, url: str, depth: int):
+        timeout = ClientTimeout(total=self.config.timeout)
 
-        for tag in soup.find_all(["a", "link", "script", "img", "form", "iframe"]):
-            attr = "action" if tag.name == "form" else ("src" if tag.name in ["script", "img", "iframe"] else "href")
-            val = tag.get(attr)
-            
-            if val:
-                full = urljoin(base, val)
-                await self.add_url(full, depth + 1)
-                
-                if tag.name == "form":
-                    m = tag.get("method", "GET").upper()
-                    self.state.add_asset("forms", f"{m} {full}", base, "html_form")
-                elif tag.name == "script":
-                    self.state.add_asset("files", val, base, "script_src")
+        async with self.session.get(url, allow_redirects=True, timeout=timeout) as resp:
+            if self.config.verbose:
+                color = "green" if resp.status < 300 else ("yellow" if resp.status < 400 else "red")
+                self.state.log(f"[{color}]{resp.status}[/] {url[:60]}")
 
-    async def _regex_extract(self, text: str, source: str):
-        matches = URL_PATTERN.findall(text)
-        for group in matches:
-            raw = group[0]
-            if not raw or len(raw) < 4: continue
-            clean = raw.strip("\"' ")
-            if "{" in clean or " " in clean: continue
-            
-            full = urljoin(source, clean)
-            
-            if "/api/" in full or full.endswith(".json"):
-                self.state.add_asset("api_endpoints", full, source, "regex_match")
-            
-            p = Path(urlparse(full).path)
-            if p.suffix and p.suffix not in IGNORED_EXTENSIONS:
-                self.state.add_asset("files", p.name, source, "regex_file")
+            content_type = resp.headers.get("Content-Type", "").lower()
 
-        for mail in EMAIL_PATTERN.findall(text):
-            self.state.add_asset("emails", mail, source, "regex_email")
+            self.extract_params(str(resp.url))
 
-    def _recursive_json(self, data, base):
+            if resp.status >= 400:
+                return
+
+            if "text/html" in content_type or "application/xhtml" in content_type:
+                try:
+                    html = await resp.text(errors="ignore")
+                    await self.extract_from_html(html, str(resp.url), depth)
+                except Exception:
+                    pass
+
+            elif "javascript" in content_type or "application/json" in content_type:
+                try:
+                    text = await resp.text(errors="ignore")
+                    await self.extract_from_text(text, str(resp.url))
+                except Exception:
+                    pass
+
+    async def extract_from_html(self, html: str, source: str, depth: int):
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+        except Exception:
+            return
+
+        base_tag = soup.find("base", href=True)
+        base = base_tag["href"] if base_tag else source
+
+        for script in soup.find_all("script"):
+            src = script.get("src")
+            if src:
+                full_url = self.normalize_url(src, base)
+                if full_url:
+                    await self.state.add_asset("files", full_url, source, "script")
+                    await self.enqueue(full_url, depth + 1)
+
+            if script.string:
+                await self.extract_from_text(script.string, source)
+
+        for tag in soup.find_all("a", href=True):
+            href = tag["href"]
+            full_url = self.normalize_url(href, base)
+            if full_url and self.is_in_scope(full_url):
+                await self.enqueue(full_url, depth + 1)
+
+        for tag in soup.find_all(["link", "img", "iframe", "embed", "source"], src=True):
+            src = tag.get("src") or tag.get("href")
+            if src:
+                full_url = self.normalize_url(src, base)
+                if full_url:
+                    await self.state.add_asset("files", full_url, source, tag.name)
+
+        for form in soup.find_all("form"):
+            action = form.get("action", "")
+            method = form.get("method", "GET").upper()
+            full_url = self.normalize_url(action, base) if action else source
+
+            if full_url:
+                form_str = f"{method} {full_url}"
+                await self.state.add_asset("forms", form_str, source, "html_form")
+
+                for inp in form.find_all(["input", "select", "textarea"]):
+                    name = inp.get("name")
+                    if name:
+                        await self.state.add_asset("parameters", name, full_url, "form_input")
+
+        next_data = soup.find("script", id="__NEXT_DATA__")
+        if next_data and next_data.string:
+            try:
+                data = json.loads(next_data.string)
+                await self.extract_from_json(data, source)
+            except Exception:
+                pass
+
+        await self.extract_from_text(html, source)
+
+    async def extract_from_text(self, text: str, source: str):
+        for match in URL_REGEX.finditer(text):
+            try:
+                raw = match.group(1)
+                if not raw or len(raw) < 3:
+                    continue
+
+                raw = raw.strip("\"'` ")
+
+                if any(c in raw for c in ["{", "}", "$", "{{", "}}"]):
+                    continue
+
+                full_url = self.normalize_url(raw, source)
+                if full_url:
+                    if self.is_in_scope(full_url):
+                        await self.state.add_asset("urls", full_url, source, "regex")
+
+                    if "/api/" in full_url or "api." in full_url:
+                        await self.state.add_asset("api_endpoints", full_url, source, "regex")
+
+            except Exception:
+                continue
+
+        for match in API_REGEX.finditer(text):
+            try:
+                path = match.group(1)
+                full_url = self.normalize_url(path, source)
+                if full_url:
+                    await self.state.add_asset("api_endpoints", full_url, source, "api_pattern")
+            except Exception:
+                continue
+
+        for email in EMAIL_REGEX.findall(text):
+            if len(email) < 100:
+                await self.state.add_asset("emails", email, source, "regex")
+
+        for pattern, secret_type in SECRET_PATTERNS:
+            for match in pattern.finditer(text):
+                try:
+                    secret = match.group(1)
+                    if len(secret) < 200:
+                        await self.state.add_asset("secrets", f"{secret_type}: {secret[:50]}...", source, secret_type)
+                except Exception:
+                    continue
+
+    async def extract_from_json(self, data: Any, source: str, prefix: str = ""):
         if isinstance(data, dict):
-            for k, v in data.items():
-                if k in ["page", "route", "asPath"] and isinstance(v, str):
-                    full = urljoin(base, v)
-                    self.state.add_asset("app_routes", full, base, "nextjs_hydration")
-                self._recursive_json(v, base)
+            for key, value in data.items():
+                if key in ["page", "route", "asPath", "pathname", "href", "url"]:
+                    if isinstance(value, str) and value.startswith("/"):
+                        full = self.normalize_url(value, source)
+                        if full:
+                            await self.state.add_asset("app_routes", full, source, "json_extract")
+
+                await self.extract_from_json(value, source, f"{prefix}.{key}")
+
         elif isinstance(data, list):
             for item in data:
-                self._recursive_json(item, base)
+                await self.extract_from_json(item, source, prefix)
 
-    def _extract_qs(self, url: str):
-        q = urlparse(url).query
-        for k in parse_qs(q):
-            self.state.add_asset("parameters", k, url, "query_param")
+        elif isinstance(data, str):
+            if data.startswith("/") and len(data) > 1:
+                full = self.normalize_url(data, source)
+                if full and self.is_in_scope(full):
+                    await self.state.add_asset("app_routes", full, source, "json_string")
 
-async def main_async():
-    parser = argparse.ArgumentParser(description="ReconMapper Pro - Advanced Asset Discovery")
-    parser.add_argument("target", help="Domain or URL to scan")
-    parser.add_argument("-t", "--threads", type=int, default=10)
-    parser.add_argument("-d", "--depth", type=int, default=3)
-    parser.add_argument("--timeout", type=int, default=10)
-    parser.add_argument("-o", "--output", help="Output JSON file")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--wayback", action="store_true")
+    def extract_params(self, url: str):
+        try:
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+
+            for key in params.keys():
+                asyncio.create_task(self.state.add_asset("parameters", key, url, "query_string"))
+
+        except Exception:
+            pass
+
+    async def run(self):
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        connector = TCPConnector(
+            limit=self.config.threads * 2,
+            limit_per_host=self.config.threads,
+            ssl=ssl_ctx,
+            enable_cleanup_closed=True
+        )
+
+        timeout = ClientTimeout(total=self.config.timeout, connect=10)
+
+        async with ClientSession(
+            connector=connector,
+            headers=self.config.headers,
+            timeout=timeout,
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as session:
+            self.session = session
+
+            await self.initialize()
+
+            if self.config.use_wayback:
+                asyncio.create_task(self.fetch_wayback())
+
+            workers = []
+            for i in range(self.config.threads):
+                worker = asyncio.create_task(self.worker(i))
+                workers.append(worker)
+
+            await self.queue.join()
+
+            self.running = False
+            self.state.is_running = False
+
+            for w in workers:
+                w.cancel()
+
+            await asyncio.gather(*workers, return_exceptions=True)
+
+
+async def run_scan(config: Config):
+    state = StateManager(verbose=config.verbose)
+    ui = UIManager(state, config)
+    crawler = Crawler(config, state)
+
+    async def update_display(live: Live):
+        while state.is_running:
+            try:
+                live.update(ui.render())
+                await asyncio.sleep(0.25)
+            except Exception:
+                pass
+
+    console = Console()
+
+    try:
+        with Live(ui.render(), console=console, refresh_per_second=4, screen=True) as live:
+            ui_task = asyncio.create_task(update_display(live))
+
+            try:
+                await crawler.run()
+            except Exception as e:
+                state.log(f"[red]Fatal: {e}[/]", force=True)
+
+            await asyncio.sleep(1)
+            ui_task.cancel()
+
+    except Exception:
+        pass
+
+    console.print()
+    console.print(Panel(f"[bold green]Scan Complete[/] | Duration: {state.get_duration()}", style="green"))
+    console.print(f"[bold]Processed:[/] {state.urls_processed} | [bold]Failed:[/] {state.urls_failed}")
+    console.print()
+
+    stats = state.get_stats()
+    if stats:
+        table = Table(title="Summary", show_header=True, header_style="bold cyan")
+        table.add_column("Category", style="cyan")
+        table.add_column("Count", justify="right", style="green")
+
+        for cat, count in sorted(stats.items(), key=lambda x: -x[1]):
+            if count > 0:
+                table.add_row(cat.replace("_", " ").title(), str(count))
+
+        console.print(table)
+        console.print()
+
+    result = {
+        "target": config.target,
+        "base_domain": state.root_domain,
+        "scan_date": datetime.now().isoformat(),
+        "duration": state.get_duration(),
+        "stats": {
+            "processed": state.urls_processed,
+            "failed": state.urls_failed
+        },
+        "summary": stats,
+        "assets": {k: v for k, v in state.assets.items()}
+    }
+
+    if config.output_file:
+        try:
+            with open(config.output_file, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            console.print(f"[green]Report saved:[/] {config.output_file}")
+        except Exception as e:
+            console.print(f"[red]Failed to save report: {e}[/]")
+
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="ReconMapper Pro - Web Asset Discovery Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument("target", help="Target domain or URL")
+    parser.add_argument("-t", "--threads", type=int, default=15, help="Number of concurrent threads")
+    parser.add_argument("-d", "--depth", type=int, default=4, help="Maximum crawl depth")
+    parser.add_argument("--timeout", type=int, default=15, help="Request timeout in seconds")
+    parser.add_argument("-o", "--output", help="Output JSON file path")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--wayback", action="store_true", help="Include Wayback Machine URLs")
+
     args = parser.parse_args()
 
-    config = Configuration(
-        input_target=args.target,
+    config = Config(
+        target=args.target,
         threads=args.threads,
         timeout=args.timeout,
         max_depth=args.depth,
@@ -399,47 +710,15 @@ async def main_async():
         use_wayback=args.wayback
     )
 
-    state = StateManager(verbose=args.verbose)
-    ui = InterfaceManager(state, config)
-    crawler = ReconCrawler(config, state)
-
-    with Live(ui.render(), refresh_per_second=4, screen=True) as live:
-        async def update_ui():
-            while True:
-                live.update(ui.render())
-                await asyncio.sleep(0.2)
-        
-        ui_task = asyncio.create_task(update_ui())
-        try:
-            await crawler.run()
-        except Exception as e:
-            state.log(f"[red]Fatal Error: {e}[/]", force=True)
-        finally:
-            ui_task.cancel()
-
-    console = Console()
-    console.print(f"\n[bold green]Finished in {state.get_duration()}[/]")
-    console.print(f"Processed: {state.urls_processed} | Failed: {state.urls_failed}")
-
-    res = {
-        "target": config.input_target,
-        "date": datetime.now().isoformat(),
-        "summary": {k: len(v) for k, v in state.assets.items()},
-        "assets": dict(state.assets)
-    }
-
-    if config.output_file:
-        with open(config.output_file, "w") as f:
-            json.dump(res, f, indent=2)
-        console.print(f"[blue]Detailed report saved to {config.output_file}[/]")
-    else:
-        pass 
-
-def main():
     try:
-        asyncio.run(main_async())
+        asyncio.run(run_scan(config))
     except KeyboardInterrupt:
-        print("\nStopped by user.")
+        print("\n[!] Scan interrupted by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[!] Error: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
