@@ -1,10 +1,4 @@
-Abaixo está uma versão mais consistente, objetiva e “GitHub-ready” do seu README, com linguagem mais precisa, seções bem separadas e já refletindo o **`-f/--filter`** e o conceito de **mapear tudo (por categoria)**. Mantive o seu estilo (badges + TUI + JSON export) e removi claims que podem soar específicos demais (ex.: “Next.js aware”) a menos que você realmente tenha esse parsing no código atual.
 
-Você pode copiar e colar como está.
-
----
-
-````md
 <div align="center">
 
 # ReconMapper Pro v2.1
