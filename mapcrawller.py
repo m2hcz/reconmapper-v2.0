@@ -40,8 +40,6 @@ IGNORED_EXTENSIONS = {
     ".ttf", ".eot", ".mp4", ".mp3", ".pdf", ".zip", ".gz", ".tar", ".rar",
     ".webp", ".bmp", ".tiff", ".otf", ".mov", ".avi", ".wmv", ".flv", ".iso", ".bin"
 }
-
-# Categorias “base” suportadas pelo filtro
 VALID_CATEGORIES: Set[str] = {
     "endpoints",
     "external_endpoints",
@@ -58,10 +56,8 @@ VALID_CATEGORIES: Set[str] = {
     "comments",
     "tech",
 }
-
-# Aliases amigáveis para -f
 FILTER_ALIASES: Dict[str, List[str]] = {
-    "all": [],  # tratado separadamente (None = sem filtro)
+    "all": [], 
     "*": [],
     "endpoint": ["endpoints", "api_endpoints"],
     "endpoints": ["endpoints", "api_endpoints"],
@@ -129,7 +125,6 @@ class Config:
     jitter: float = 0.0
     check_sitemap: bool = True
     headers: Dict[str, str] = field(default_factory=dict)
-    # None = sem filtro (coleta/mostra tudo)
     filters: Optional[Set[str]] = None
 
     def __post_init__(self):
@@ -146,7 +141,7 @@ class Config:
 class StateManager:
     def __init__(self, verbose: bool = False, filters: Optional[Set[str]] = None):
         self.verbose = verbose
-        self.filters = filters  # None = tudo
+        self.filters = filters 
         self.start_time = datetime.now()
         self.urls_processed = 0
         self.urls_failed = 0
@@ -332,10 +327,6 @@ class Analyzers:
 
     @staticmethod
     def extract_directories(url: str) -> Set[str]:
-        """
-        Retorna todos os diretórios/prefixos do path.
-        Ex.: /a/b/c.js -> {/a/, /a/b/}
-        """
         dirs: Set[str] = set()
         try:
             parsed = urlparse(url)
@@ -343,7 +334,6 @@ class Analyzers:
             if not path.startswith("/"):
                 path = "/" + path
 
-            # Se terminar com '/', é diretório; senão, pega o parent
             if path.endswith("/"):
                 base_path = path
             else:
@@ -351,7 +341,6 @@ class Analyzers:
                 if base_path == "//":
                     base_path = "/"
 
-            # Gera prefixos
             parts = [p for p in base_path.split("/") if p]
             cur = "/"
             for p in parts:
@@ -442,8 +431,6 @@ class Crawler:
 
     async def process_page(self, url: str, html_content: str, headers: Dict, depth: int):
         await self.analyzers.extract_technologies(headers, html_content, self.state)
-
-        # Mesmo quando não for HTML válido (ex.: JS), ainda queremos regex scan
         try:
             soup = BeautifulSoup(html_content, "html.parser")
         except Exception:
@@ -453,8 +440,6 @@ class Crawler:
         if soup:
             base_tag = soup.find("base", href=True)
             base_url = base_tag["href"] if base_tag else url
-
-            # href endpoints
             for tag in soup.find_all(href=True):
                 full = self.analyzers.normalize_url(tag.get('href', ''), base_url)
                 if not full:
@@ -489,21 +474,16 @@ class Crawler:
 
                     await self.state.add_asset("forms", f"{method} {target} Params: {inputs}", url)
 
-            # comments
             for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
                 c = (comment or "").strip()
                 if 4 < len(c) < 300:
                     await self.state.add_asset("comments", c, url)
 
-        # Sempre faz scan de texto (HTML/JS/JSON/XML)
         await self.scan_text_content(html_content, url)
 
     async def scan_text_content(self, text: str, source_url: str):
-        # emails
         for mail in REGEX_PATTERNS["email"].findall(text):
             await self.state.add_asset("emails", mail, source_url)
-
-        # cloud buckets
         for match in REGEX_PATTERNS["s3_bucket"].findall(text):
             await self.state.add_asset("cloud_buckets", f"AWS: {match}", source_url)
         for match in REGEX_PATTERNS["google_cloud"].findall(text):
@@ -511,26 +491,22 @@ class Crawler:
         for match in REGEX_PATTERNS["azure_blob"].findall(text):
             await self.state.add_asset("cloud_buckets", f"AZURE: {match}", source_url)
 
-        # api endpoints (como antes, mas mantendo)
         if "/api/" in text or "api." in text:
             paths = re.findall(r'["\'](/api/[^"\']+)["\']', text)
             for p in paths:
                 await self.state.add_asset("api_endpoints", p, source_url)
 
-        # secrets
         for pattern, name in SECRET_PATTERNS:
             for match in pattern.finditer(text):
                 val = match.group(1) if match.lastindex else match.group(0)
                 await self.state.add_asset("secrets", f"{name}: {val}", source_url)
 
-        # endpoints/paths em strings (HTML/JS/JSON)
         for m in REGEX_PATTERNS["url"].finditer(text):
             raw = m.group(1)
             full = self.analyzers.normalize_url(raw, source_url)
             if not full:
                 continue
 
-            # Registra e tenta enfileirar (se in-scope)
             await self.enqueue(full, depth=self.config.max_depth, source=source_url)
 
     async def worker(self):
@@ -681,8 +657,6 @@ def parse_filters(raw_filters: Optional[List[str]], parser: argparse.ArgumentPar
 
     if unknown:
         parser.error(f"Unknown -f/--filter category(es): {', '.join(unknown)}. Valid: {', '.join(sorted(VALID_CATEGORIES))} (aliases: endpoint, dirs, etc.)")
-
-    # Se o user passar algo que expanda para vazio (ex.: 'all'), já tratamos acima.
     return selected or None
 
 async def main_async():
