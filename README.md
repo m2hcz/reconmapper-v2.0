@@ -1,244 +1,257 @@
-
 <div align="center">
 
-# ReconMapper Pro v2.1
+# A.S.I.A ReconMapper Studio
 
-[![python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#)
-[![async](https://img.shields.io/badge/Async-aiohttp%20%7C%20asyncio-informational.svg)](#)
-[![ui](https://img.shields.io/badge/TUI-rich%20terminal-lightgrey.svg)](#)
-[![status](https://img.shields.io/badge/Status-beta-success.svg)](#)
+### Authorized web surface mapping with a Burp-inspired local operations console
 
-**Async, single-scope recon & asset mapper** with a Rich TUI, sitemap/robots discovery and optional Wayback seeding.
+[![Python](https://img.shields.io/badge/Python-3.11%2B-ffffff?style=flat-square&labelColor=050505&color=ffffff)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116-ffffff?style=flat-square&labelColor=050505&color=ffffff)](https://fastapi.tiangolo.com/)
+[![Tests](https://github.com/m2hcz/reconmapper-v2.0/actions/workflows/tests.yml/badge.svg)](https://github.com/m2hcz/reconmapper-v2.0/actions/workflows/tests.yml)
+[![Version](https://img.shields.io/badge/version-2.1.1-ffffff?style=flat-square&labelColor=050505&color=ffffff)](#changelog)
+
+ReconMapper is a passive, asynchronous web application mapper built for authorized security assessments. It crawls a defined scope, persists the observed surface in SQLite, and exposes the result through a local interface at `http://127.0.0.1:8080`.
 
 </div>
 
-> Crawl → extract → classify → export (JSON)
+<p align="center">
+  <img src="docs/preview.png" alt="A.S.I.A ReconMapper Studio interface" width="100%">
+</p>
 
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Highlights](#highlights)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [CLI Usage](#cli-usage)
-- [Filters](#filters)
-- [Output](#output)
-- [TUI Overview](#tui-overview)
-- [How It Works](#how-it-works)
-- [Notes & Limitations](#notes--limitations)
-- [Ethics & Legality](#ethics--legality)
-- [License](#license)
-
----
+> [!IMPORTANT]
+> ReconMapper is intended only for systems you own or are explicitly authorized to assess. It performs passive `GET` navigation and cataloguing; it does not submit forms, brute-force credentials, exploit findings, or execute destructive actions.
 
 ## Overview
 
-ReconMapper Pro is an asynchronous crawler designed to map a target’s application surface within a single scope.  
-It discovers endpoints and assets, extracts useful recon artifacts, and exports everything to JSON for analysis and triage.
+A.S.I.A ReconMapper Studio replaces the original terminal-only crawler with a modular local application composed of:
 
-Typical use-cases:
-- Attack surface mapping (paths, endpoints, parameters, forms)
-- Asset discovery (scripts, files, directories)
-- Low-noise recon with scope locking and configurable depth
+- an asynchronous crawl engine using `aiohttp`;
+- a FastAPI service and WebSocket event stream;
+- SQLite persistence with WAL mode;
+- an A.S.I.A operations console inspired by Burp Suite workflows;
+- a passive analysis pipeline for routes, forms, parameters, APIs, metadata, cookies, headers, technologies, and possible exposed secrets.
 
----
+The interface is organized into Site Map, Request History, Inspector, and Findings views. Previous scans remain available after the service restarts.
 
-## Highlights
+## Core capabilities
 
-- **Async crawler**
-  - `aiohttp` + `asyncio` worker pool
-  - Central queue with depth tracking (`--depth`)
-- **Scope locking**
-  - Pre-flight request follows redirects and locks on the effective root domain
-  - Records subdomains discovered during crawl
-- **HTML-aware extraction**
-  - Parses `a[href]`, `link[href]`, `script[src]`, `img[src]`, `iframe[src]`, `form`
-  - Respects `<base href>` for correct URL resolution
-- **Discovery beyond DOM**
-  - Regex discovery of URLs/paths inside HTML/JS/JSON blobs
-  - Extracts querystring keys and form field names
-- **Special endpoints**
-  - Optional `/robots.txt` and `/sitemap.xml` discovery (toggleable)
-  - Optional Wayback Machine seeding for historical URLs
-- **Rich TUI**
-  - Live stats: processed / failed / queue / current URL
-  - Per-category counters
-  - Rolling log output
-- **JSON export**
-  - Full findings with sources and timestamps
-  - Single output file with summary and categorized artifacts
+| Area | Capabilities |
+| --- | --- |
+| Mapping | HTML links, assets, forms, query parameters, JavaScript routes, JSON/XML references, WebSockets, subdomains, and external resources |
+| Discovery | `robots.txt`, sitemap XML, OpenAPI documents, inline scripts, comments, metadata, and common API paths |
+| HTTP history | Status, MIME type, body size, latency, redirect chain, request headers, response headers, and response preview |
+| Site Map | Hierarchical host, directory, endpoint, and query-string representation |
+| Passive findings | Security headers, cookie flags, exposed metadata, technology fingerprints, and redacted secret candidates |
+| Persistence | SQLite database with scan, request, artifact, and finding records |
+| Live telemetry | WebSocket updates with polling fallback, counters, duration, queue state, and connection status |
+| Export | Complete per-scan JSON export |
+| Scope controls | Host/subdomain policy, depth, concurrency, delay, URL cap, TLS verification, and body-size cap |
 
----
+## Safety model
+
+ReconMapper intentionally does not:
+
+- submit HTML forms;
+- issue `POST`, `PUT`, `PATCH`, or `DELETE` requests;
+- brute-force credentials or directories;
+- bypass authentication;
+- exploit vulnerabilities;
+- follow redirects outside the configured scope;
+- persist raw authorization tokens or cookie values in the request history.
+
+Potential secrets are redacted and fingerprinted before persistence. Use test accounts and protect the SQLite database because it can still contain sensitive URLs, metadata, and response previews.
 
 ## Requirements
 
-- **Python 3.10+**
+- Python 3.11 or newer
+- Windows, Linux, or macOS
+- Network access to the authorized target
 
-Dependencies:
-- `aiohttp`
-- `beautifulsoup4`
-- `rich`
+## Quick start
 
----
+### Windows
 
-## Installation
+```powershell
+git clone https://github.com/m2hcz/reconmapper-v2.0.git
+cd reconmapper-v2.0
+start_windows.bat
+```
+
+Or manually:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python run.py
+```
+
+### Linux or macOS
+
+```bash
+git clone https://github.com/m2hcz/reconmapper-v2.0.git
+cd reconmapper-v2.0
+chmod +x start_linux.sh
+./start_linux.sh
+```
+
+Or manually:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -U aiohttp beautifulsoup4 rich
-````
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python run.py
+```
 
----
+Open:
 
-## Quick Start
+```text
+http://127.0.0.1:8080
+```
 
-Scan a domain with default settings:
+## Configuration
+
+The service accepts command-line arguments:
 
 ```bash
-python3 reconmapper.py example.com
+python run.py --host 127.0.0.1 --port 8080
 ```
 
-Deeper scan, more concurrency, export JSON:
+Environment variables:
+
+```env
+RECONMAPPER_HOST=127.0.0.1
+RECONMAPPER_PORT=8080
+RECONMAPPER_DB=./reconmapper.db
+```
+
+Legacy `MAPCRAWLER_*` environment variables remain supported as fallbacks for migration from version 2.1.0.
+
+### Authorized session headers
+
+The settings panel accepts a JSON object containing headers for an authorized test session:
+
+```json
+{
+  "Cookie": "session=AUTHORIZED_TEST_SESSION",
+  "Authorization": "Bearer AUTHORIZED_TEST_TOKEN"
+}
+```
+
+Blocked hop-by-hop headers are discarded, CR/LF injection is rejected, and sensitive values are redacted before persistence.
+
+## Docker
 
 ```bash
-python3 reconmapper.py example.com -d 4 -t 30 -o out.json
+docker build -t asia-reconmapper .
+docker run --rm \
+  -p 127.0.0.1:8080:8080 \
+  -v "$PWD/data:/app/data" \
+  -e RECONMAPPER_DB=/app/data/reconmapper.db \
+  asia-reconmapper
 ```
 
----
+## Interface shortcuts
 
-## CLI Usage
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl + K` | Focus target input |
+| `Ctrl + ,` | Open settings |
+| `/` | Focus HTTP History search |
+| `↑` / `↓` | Navigate request history |
+| `Alt + [` | Collapse or expand Site Map |
+| `Alt + ]` | Collapse or expand Inspector |
+
+Panel widths and collapsed states are stored locally in the browser.
+
+## Local API
+
+Interactive OpenAPI documentation:
+
+```text
+http://127.0.0.1:8080/api/docs
+```
+
+Main routes:
+
+```text
+POST /api/scans
+POST /api/scans/{scan_id}/stop
+GET  /api/scans
+GET  /api/scans/{scan_id}
+GET  /api/scans/{scan_id}/requests
+GET  /api/scans/{scan_id}/requests/{request_id}
+GET  /api/scans/{scan_id}/artifacts
+GET  /api/scans/{scan_id}/findings
+GET  /api/scans/{scan_id}/sitemap
+GET  /api/scans/{scan_id}/export.json
+WS   /ws/scans/{scan_id}
+```
+
+## Project structure
+
+```text
+reconmapper-v2.0/
+├── reconmapper/
+│   ├── app.py
+│   ├── core/
+│   │   ├── analyzer.py
+│   │   ├── engine.py
+│   │   ├── models.py
+│   │   ├── scope.py
+│   │   └── storage.py
+│   └── web/
+│       ├── static/
+│       └── templates/
+├── tests/
+├── docs/
+├── run.py
+├── pyproject.toml
+└── requirements.txt
+```
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the execution and persistence model.
+
+## Testing
 
 ```bash
-python3 reconmapper.py <target> [options]
+pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-Common options:
+The suite covers URL normalization, scope enforcement, host/port handling, non-submission of forms, parameterized-route cataloguing, secret redaction, and finding deduplication.
 
-* `-t, --threads <int>`: concurrency (default: 15)
-* `-d, --depth <int>`: max crawl depth (default: 3)
-* `-o, --output <path>`: export findings as JSON
-* `--proxy <url>`: upstream proxy (e.g., `http://127.0.0.1:8080`)
-* `--wayback`: enable Wayback seeding
-* `--jitter <float>`: random delay between requests
-* `--no-sitemap`: disable robots/sitemap discovery
-* `-v, --verbose`: more logging
-* `-f, --filter <list>`: restrict output to specific categories (see below)
+## Validation errors
 
----
+Version 2.1.1 fixes the previous `[object Object]` notification. FastAPI validation errors are now rendered with the affected field and its actual message. Numeric settings are also validated client-side before a scan is created.
 
-## Filters
+Example:
 
-Use `-f` / `--filter` to focus your mapping and reduce noise.
-You can pass a comma-separated list and/or repeat the flag.
-
-Examples:
-
-Map only files:
-
-```bash
-python3 reconmapper.py example.com -f files -o out.json
+```text
+max_urls: Input should be greater than or equal to 1
+max_body_bytes: Input should be greater than or equal to 16384
 ```
 
-Map endpoints + API endpoints + params:
+## Limitations
 
-```bash
-python3 reconmapper.py example.com -f endpoint,params -o out.json
-```
+ReconMapper is a crawler, not an intercepting proxy or a browser automation framework. Routes that require complex frontend state, human interaction, authenticated WebSocket flows, service workers, or browser-only execution may not be discovered.
 
-Map directories and inputs:
+Potential future integrations include HAR import and optional Playwright-assisted discovery while preserving the same storage and UI model.
 
-```bash
-python3 reconmapper.py example.com -f directories -f inputs -o out.json
-```
+## Responsible use
 
-Supported categories (may vary by version):
+Use the project only under explicit authorization and within the agreed rules of engagement. The operator is responsible for target ownership, scope validation, rate limits, data handling, and compliance with applicable law.
 
-* `endpoints` (in-scope URLs)
-* `api_endpoints` (e.g., `/api/...` patterns)
-* `external_endpoints` (out-of-scope URLs observed)
-* `directories`
-* `files`
-* `inputs`
-* `params`
-* `forms`
-* `emails`
-* `cloud_buckets`
-* `secrets`
-* `subdomains`
-* `comments`
-* `tech`
+## Contributing
 
-Alias shortcuts:
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening an issue or pull request. Security-sensitive reports should follow [`SECURITY.md`](SECURITY.md).
 
-* `endpoint` → includes `endpoints` + `api_endpoints`
-* `dirs` / `dir` → `directories`
-* `files` / `file` → `files`
-* `params` / `param` → `params`
+## Changelog
 
-Tip: use `-f all` (or omit `-f`) to map everything.
+See [`CHANGELOG.md`](CHANGELOG.md).
 
----
+## Author
 
-## Output
-
-When `-o/--output` is provided, ReconMapper writes a single JSON file containing:
-
-* `target`, `scan_time`, `duration`
-* `stats` (processed / failed)
-* `technologies` (best-effort detection)
-* `findings` per category:
-
-  * `value`: the discovered artifact
-  * `source`: where it was found
-  * `timestamp`: discovery time
-
----
-
-## TUI Overview
-
-The Rich interface displays:
-
-* Current status and runtime
-* Crawl counters (processed/failed/queue)
-* Current URL being processed
-* Tech stack (best-effort)
-* Findings summary by category
-* Rolling log feed (important events + debug in verbose)
-
----
-
-## How It Works
-
-1. Resolves the target and locks the scope to the effective domain
-2. Seeds the queue with the initial URL (+ optional sitemap/robots and Wayback)
-3. Crawls asynchronously using a worker pool
-4. Extracts:
-
-   * DOM links/assets/forms
-   * URLs and paths from inlined content via regex
-   * parameters from querystrings and form field names
-5. Deduplicates findings and exports results (optional)
-
----
-
-## Notes & Limitations
-
-* Intended for **single-scope** mapping (root domain + subdomains)
-* JS-heavy apps may require deeper crawling and script fetching to maximize coverage
-* Some assets are ignored by extension (images, fonts, archives, media) to reduce noise
-* This tool does not attempt browser automation; it is a crawler, not a headless browser
-
----
-
-## Ethics & Legality
-
-Use only on targets you own or have explicit authorization to test.
-You are responsible for compliance with applicable laws, rules of engagement, and program scope.
-
----
-
-```
+Developed by [m2hcz](https://github.com/m2hcz) under the A.S.I.A Security identity.
