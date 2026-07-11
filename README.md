@@ -1,70 +1,49 @@
 <div align="center">
-
-# A.S.I.A ReconMapper Studio
-
-### Authorized web surface mapping with a Burp-inspired local operations console
-
-[![Python](https://img.shields.io/badge/Python-3.11%2B-ffffff?style=flat-square&labelColor=050505&color=ffffff)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.116-ffffff?style=flat-square&labelColor=050505&color=ffffff)](https://fastapi.tiangolo.com/)
-[![Tests](https://github.com/m2hcz/reconmapper-v2.0/actions/workflows/tests.yml/badge.svg)](https://github.com/m2hcz/reconmapper-v2.0/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/version-2.1.1-ffffff?style=flat-square&labelColor=050505&color=ffffff)](#changelog)
-
-ReconMapper is a passive, asynchronous web application mapper built for authorized security assessments. It crawls a defined scope, persists the observed surface in SQLite, and exposes the result through a local interface at `http://127.0.0.1:8080`.
-
+  <p><sub>A.S.I.A SECURITY · OFFENSIVE SECURITY TOOLING</sub></p>
+  <h1>ReconMapper Studio</h1>
+  <p>
+    <strong>Passive web surface mapping for authorized security assessments.</strong><br />
+    Crawl, inspect, persist, and export application surfaces from a local operations console.
+  </p>
+  <p>
+    <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-FFFFFF?style=flat-square&labelColor=050505&color=FFFFFF">
+    <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.116.1-FFFFFF?style=flat-square&labelColor=050505&color=FFFFFF">
+    <img alt="SQLite" src="https://img.shields.io/badge/Storage-SQLite-FFFFFF?style=flat-square&labelColor=050505&color=FFFFFF">
+    <img alt="Version 2.1.1" src="https://img.shields.io/badge/Version-2.1.1-FFFFFF?style=flat-square&labelColor=050505&color=FFFFFF">
+    <img alt="Authorized use only" src="https://img.shields.io/badge/Use-Authorized%20Targets%20Only-FFFFFF?style=flat-square&labelColor=050505&color=FFFFFF">
+  </p>
 </div>
 
 <p align="center">
-  <img src="docs/preview.png" alt="A.S.I.A ReconMapper Studio interface" width="100%">
+  <a href="docs/preview.png">
+    <img src="docs/preview.png" alt="A.S.I.A ReconMapper Studio operations console" width="1100" />
+  </a>
 </p>
 
 > [!IMPORTANT]
-> ReconMapper is intended only for systems you own or are explicitly authorized to assess. It performs passive `GET` navigation and cataloguing; it does not submit forms, brute-force credentials, exploit findings, or execute destructive actions.
+> ReconMapper is designed exclusively for systems you own or are explicitly authorized to assess. It performs passive `GET`-based navigation and cataloguing. It does not submit forms, brute-force credentials, exploit findings, or execute destructive actions.
 
-## Overview
+## What ReconMapper does
 
-A.S.I.A ReconMapper Studio replaces the original terminal-only crawler with a modular local application composed of:
+ReconMapper Studio maps the observable surface of a web application and presents the collected evidence in a local, Burp-inspired workspace. The crawler runs asynchronously, keeps the scan inside a defined scope, stores results in SQLite, and streams progress to the interface in real time.
 
-- an asynchronous crawl engine using `aiohttp`;
-- a FastAPI service and WebSocket event stream;
-- SQLite persistence with WAL mode;
-- an A.S.I.A operations console inspired by Burp Suite workflows;
-- a passive analysis pipeline for routes, forms, parameters, APIs, metadata, cookies, headers, technologies, and possible exposed secrets.
+The workspace is organized around four operational views:
 
-The interface is organized into Site Map, Request History, Inspector, and Findings views. Previous scans remain available after the service restarts.
+- **Site Map** — hosts, directories, endpoints, files, and query-string structure.
+- **HTTP History** — status, MIME type, response size, latency, and redirect information.
+- **Message Inspector** — request headers, response headers, body preview, and metadata.
+- **Findings** — passive observations such as missing security headers, cookie issues, exposed metadata, technology fingerprints, and redacted secret candidates.
 
-## Core capabilities
+## Why it is different
 
-| Area | Capabilities |
-| --- | --- |
-| Mapping | HTML links, assets, forms, query parameters, JavaScript routes, JSON/XML references, WebSockets, subdomains, and external resources |
-| Discovery | `robots.txt`, sitemap XML, OpenAPI documents, inline scripts, comments, metadata, and common API paths |
-| HTTP history | Status, MIME type, body size, latency, redirect chain, request headers, response headers, and response preview |
-| Site Map | Hierarchical host, directory, endpoint, and query-string representation |
-| Passive findings | Security headers, cookie flags, exposed metadata, technology fingerprints, and redacted secret candidates |
-| Persistence | SQLite database with scan, request, artifact, and finding records |
-| Live telemetry | WebSocket updates with polling fallback, counters, duration, queue state, and connection status |
-| Export | Complete per-scan JSON export |
-| Scope controls | Host/subdomain policy, depth, concurrency, delay, URL cap, TLS verification, and body-size cap |
+ReconMapper is not a wrapper around a single scanner. It combines crawling, passive analysis, persistence, and inspection into one local application.
 
-## Safety model
-
-ReconMapper intentionally does not:
-
-- submit HTML forms;
-- issue `POST`, `PUT`, `PATCH`, or `DELETE` requests;
-- brute-force credentials or directories;
-- bypass authentication;
-- exploit vulnerabilities;
-- follow redirects outside the configured scope;
-- persist raw authorization tokens or cookie values in the request history.
-
-Potential secrets are redacted and fingerprinted before persistence. Use test accounts and protect the SQLite database because it can still contain sensitive URLs, metadata, and response previews.
-
-## Requirements
-
-- Python 3.11 or newer
-- Windows, Linux, or macOS
-- Network access to the authorized target
+- **Application-aware discovery:** HTML, forms, JavaScript routes, JSON/XML references, WebSockets, OpenAPI documents, `robots.txt`, and sitemap XML.
+- **Evidence-first history:** every fetched resource can be inspected after the scan, including previous sessions.
+- **Strict scope enforcement:** internal redirects are followed; out-of-scope redirects are recorded but not requested.
+- **Safe authenticated mapping:** authorized session headers can be supplied, while sensitive values are redacted before persistence.
+- **Operational interface:** resizable panels, keyboard navigation, live counters, WebSocket updates, and polling fallback.
+- **Portable output:** full per-scan JSON export for triage, reporting, or downstream processing.
 
 ## Quick start
 
@@ -76,7 +55,7 @@ cd reconmapper-v2.0
 start_windows.bat
 ```
 
-Or manually:
+Manual installation:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -95,7 +74,7 @@ chmod +x start_linux.sh
 ./start_linux.sh
 ```
 
-Or manually:
+Manual installation:
 
 ```bash
 python3 -m venv .venv
@@ -105,15 +84,60 @@ pip install -r requirements.txt
 python run.py
 ```
 
-Open:
+Open the local console:
 
 ```text
 http://127.0.0.1:8080
 ```
 
-## Configuration
+## Mapping capabilities
 
-The service accepts command-line arguments:
+### Surface discovery
+
+- Links, scripts, stylesheets, images, iframes, and other referenced assets.
+- Form actions, methods, field names, input types, and parameters.
+- Query-string keys and hierarchical directory paths.
+- JavaScript routes, API paths, WebSocket URLs, and inline references.
+- Subdomains and external resources observed during the crawl.
+- `robots.txt`, sitemap XML, OpenAPI/Swagger documents, metadata, and comments.
+
+### Passive analysis
+
+- Missing or permissive security headers.
+- Cookie attributes such as `Secure`, `HttpOnly`, and `SameSite`.
+- Technology and framework fingerprints.
+- Cloud storage references and exposed email addresses.
+- Potential credentials or tokens, redacted and fingerprinted before storage.
+- Error responses and crawl failures with their source URLs.
+
+### Scan controls
+
+- Maximum crawl depth.
+- Concurrent request limit.
+- Per-request timeout and optional delay.
+- Maximum URL count and response-body size.
+- Same-host or root-domain/subdomain scope policy.
+- TLS certificate verification.
+- Optional custom headers for authorized sessions.
+
+## Safety boundaries
+
+ReconMapper intentionally does not:
+
+- submit HTML forms;
+- send `POST`, `PUT`, `PATCH`, or `DELETE` requests;
+- perform credential attacks or directory brute force;
+- bypass authentication or authorization controls;
+- execute discovered JavaScript in a browser engine;
+- exploit suspected vulnerabilities;
+- follow redirects outside the configured scope;
+- store raw authorization tokens or cookie values in request history.
+
+The SQLite database can still contain sensitive paths, parameters, metadata, and response previews. Treat it as assessment evidence and protect it accordingly.
+
+## Running the service
+
+The default host and port are `127.0.0.1:8080`.
 
 ```bash
 python run.py --host 127.0.0.1 --port 8080
@@ -127,11 +151,12 @@ RECONMAPPER_PORT=8080
 RECONMAPPER_DB=./reconmapper.db
 ```
 
-Legacy `MAPCRAWLER_*` environment variables remain supported as fallbacks for migration from version 2.1.0.
+Legacy `MAPCRAWLER_*` variables remain supported as migration fallbacks from version 2.1.0.
 
-### Authorized session headers
+<details>
+<summary><strong>Authorized session headers</strong></summary>
 
-The settings panel accepts a JSON object containing headers for an authorized test session:
+The settings panel accepts a JSON object containing headers for a session that you are authorized to use:
 
 ```json
 {
@@ -140,12 +165,15 @@ The settings panel accepts a JSON object containing headers for an authorized te
 }
 ```
 
-Blocked hop-by-hop headers are discarded, CR/LF injection is rejected, and sensitive values are redacted before persistence.
+Hop-by-hop headers are discarded, CR/LF injection is rejected, and sensitive values are redacted before they are written to the database.
+
+</details>
 
 ## Docker
 
 ```bash
 docker build -t asia-reconmapper .
+
 docker run --rm \
   -p 127.0.0.1:8080:8080 \
   -v "$PWD/data:/app/data" \
@@ -153,28 +181,27 @@ docker run --rm \
   asia-reconmapper
 ```
 
-## Interface shortcuts
+## Keyboard shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl + K` | Focus target input |
-| `Ctrl + ,` | Open settings |
-| `/` | Focus HTTP History search |
-| `↑` / `↓` | Navigate request history |
-| `Alt + [` | Collapse or expand Site Map |
-| `Alt + ]` | Collapse or expand Inspector |
+- <kbd>Ctrl</kbd> + <kbd>K</kbd> — focus the target field.
+- <kbd>Ctrl</kbd> + <kbd>,</kbd> — open scan settings.
+- <kbd>/</kbd> — focus HTTP History search.
+- <kbd>↑</kbd> / <kbd>↓</kbd> — move through request history.
+- <kbd>Alt</kbd> + <kbd>[</kbd> — collapse or expand Site Map.
+- <kbd>Alt</kbd> + <kbd>]</kbd> — collapse or expand Message Inspector.
 
-Panel widths and collapsed states are stored locally in the browser.
+Panel widths and collapsed states are retained in browser storage.
 
 ## Local API
 
-Interactive OpenAPI documentation:
+Interactive OpenAPI documentation is available at:
 
 ```text
 http://127.0.0.1:8080/api/docs
 ```
 
-Main routes:
+<details>
+<summary><strong>Main endpoints</strong></summary>
 
 ```text
 POST /api/scans
@@ -190,21 +217,23 @@ GET  /api/scans/{scan_id}/export.json
 WS   /ws/scans/{scan_id}
 ```
 
-## Project structure
+</details>
+
+## Architecture
 
 ```text
 reconmapper-v2.0/
 ├── reconmapper/
-│   ├── app.py
+│   ├── app.py                 # FastAPI application and service entry point
 │   ├── core/
-│   │   ├── analyzer.py
-│   │   ├── engine.py
-│   │   ├── models.py
-│   │   ├── scope.py
-│   │   └── storage.py
+│   │   ├── analyzer.py        # Passive extraction and finding generation
+│   │   ├── engine.py          # Async crawl orchestration
+│   │   ├── models.py          # Request and response schemas
+│   │   ├── scope.py           # URL normalization and scope enforcement
+│   │   └── storage.py         # SQLite persistence
 │   └── web/
-│       ├── static/
-│       └── templates/
+│       ├── static/            # Interface JavaScript and CSS
+│       └── templates/         # A.S.I.A operations console
 ├── tests/
 ├── docs/
 ├── run.py
@@ -212,7 +241,7 @@ reconmapper-v2.0/
 └── requirements.txt
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the execution and persistence model.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the execution flow, storage model, and service boundaries.
 
 ## Testing
 
@@ -221,11 +250,11 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-The suite covers URL normalization, scope enforcement, host/port handling, non-submission of forms, parameterized-route cataloguing, secret redaction, and finding deduplication.
+The test suite covers URL normalization, host and port scoping, redirect handling, form non-submission, parameterized-route cataloguing, secret redaction, and finding deduplication.
 
-## Validation errors
+## Validation feedback
 
-Version 2.1.1 fixes the previous `[object Object]` notification. FastAPI validation errors are now rendered with the affected field and its actual message. Numeric settings are also validated client-side before a scan is created.
+Version 2.1.1 replaces the previous `[object Object]` notification with readable FastAPI validation feedback. Invalid fields are now identified directly in the interface, and numeric settings are validated before scan creation.
 
 Example:
 
@@ -236,22 +265,21 @@ max_body_bytes: Input should be greater than or equal to 16384
 
 ## Limitations
 
-ReconMapper is a crawler, not an intercepting proxy or a browser automation framework. Routes that require complex frontend state, human interaction, authenticated WebSocket flows, service workers, or browser-only execution may not be discovered.
+ReconMapper is a crawler and passive application mapper. It is not an intercepting proxy, vulnerability exploitation framework, or full browser automation engine.
 
-Potential future integrations include HAR import and optional Playwright-assisted discovery while preserving the same storage and UI model.
+Coverage can be reduced when routes depend on complex frontend state, service workers, client-side rendering, authenticated WebSocket flows, CAPTCHA challenges, or human interaction. Browser-assisted discovery may be added later without changing the existing persistence and inspection model.
+
+## Documentation and contribution
+
+- Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Security policy: [`SECURITY.md`](SECURITY.md)
 
 ## Responsible use
 
-Use the project only under explicit authorization and within the agreed rules of engagement. The operator is responsible for target ownership, scope validation, rate limits, data handling, and compliance with applicable law.
-
-## Contributing
-
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening an issue or pull request. Security-sensitive reports should follow [`SECURITY.md`](SECURITY.md).
-
-## Changelog
-
-See [`CHANGELOG.md`](CHANGELOG.md).
+Use ReconMapper only with explicit authorization and within the applicable rules of engagement. The operator is responsible for target ownership, scope validation, request rate, evidence handling, and compliance with applicable law.
 
 ## Author
 
-Developed by [m2hcz](https://github.com/m2hcz) under the A.S.I.A Security identity.
+Developed by [m2hcz](https://github.com/m2hcz) under the **A.S.I.A Security** identity.
