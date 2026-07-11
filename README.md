@@ -14,12 +14,6 @@
   </p>
 </div>
 
-<p align="center">
-  <a href="docs/preview.png">
-    <img src="docs/preview.png" alt="A.S.I.A ReconMapper Studio operations console" width="1100" />
-  </a>
-</p>
-
 > [!IMPORTANT]
 > ReconMapper is designed exclusively for systems you own or are explicitly authorized to assess. It performs passive `GET`-based navigation and cataloguing. It does not submit forms, brute-force credentials, exploit findings, or execute destructive actions.
 
